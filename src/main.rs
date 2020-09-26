@@ -1,70 +1,124 @@
-//use tungstenite;
-//use std::io;
-// use std::path::Path;
-// use std::fs::File;
-// use url::Url;
-
 use serde_json::Value;
+use trading_bot;
+use std::collections::HashMap;
 
-fn main() {
-    println!("Hello, world!");
+static FXCM_API_HOST: &str = "api-demo.fxcm.com";
 
-    // let path = Path::new("hello.txt");
-    // let file_result = File::create(&path);
-    // let file = file_result.unwrap();
+struct FxcmTradingService {
+    account_token : String,
+    socket_id : String,
+    authorization_token : String,
+    socket : tungstenite::WebSocket<tungstenite::client::AutoStream>
+}
 
-    println!("Opened file!");
+impl FxcmTradingService {
+    fn create(account_token : &str) -> Result<FxcmTradingService, String> {
+        println!("Connecting to {}", FXCM_API_HOST);
 
-    //let trading_api_url = "https://api-demo.fxcm.com:443";
-    //let trading_api_url = "127.0.0.1:9001";
-
-    // Test token validity in http://restapi101.herokuapp.com/
-    let login_token = "4979200962b698e88aa1492f4e62f6e30e338a27";
-    
-    let result = tungstenite::connect(
-        format!("wss://api-demo.fxcm.com/socket.io/?EIO=3&transport=websocket&access_token={}", login_token));
-    match result {
-        Ok((mut socket, _response)) => {
-            println!("Success");
-
-            let maybe_message = socket.read_message();
-            println!("WebSocket message: {:?}", maybe_message);
-            let v: Value = serde_json::from_str(maybe_message.unwrap().to_text().unwrap().strip_prefix("0").unwrap()).unwrap();
-            println!("{}", v["sid"]);
-            let server_socket_id = format!("{}", v["sid"].as_str().unwrap());
-    
-            let bearer_access_token = format!("Bearer {}{}", server_socket_id, login_token);
-            println!("Bearer: {}", bearer_access_token);
-
-            let maybe_message2 = socket.read_message();
-            println!("WebSocket message2: {:?}", maybe_message2);
-
-            // Bearer n5BoWSRFJvYi2GEQAAKy a11f7bc3d6b14ff77f65dd9d21df16ac1b4c41ea
-            // Bearer covX2GE44OPZnn9SACma 4053cece3bbe29d6c994691d34b05316c210a137
-
-            let client = reqwest::blocking::Client::new();
-            let resp = client
-                // .get("https://api-demo.fxcm.com:443/candles/1/m1?num=5")
-                .get("https://api-demo.fxcm.com:443/trading/get_instruments/")
-                .header("Authorization", bearer_access_token)
-                .header("Accept", "application/json")
-                .header("Host", "api-demo.fxcm.com")
-                // .header("port", "443")
-                // .header("path", "application/json")
-                .header("User-Agent", "request")
-                .header("Content-Type", "application/x-www-form-urlencoded'")
-                .header("Connection", "close")
-                .send();
-            // println!("{:#?}", resp);
-            match resp {
-                Ok(r) => println!("{:?}", r.text()),
-                _ => println!("error")
+        // Token validity can be tested in http://restapi101.herokuapp.com/
+        let connect_result = tungstenite::connect(
+            format!("wss://{}/socket.io/?EIO=3&transport=websocket&access_token={}", FXCM_API_HOST, account_token));
+            
+        let (mut socket, response) = match connect_result {
+            Ok(result) => result,
+            Err(message) => {
+                println!("Could not connect to {}: '{}'", FXCM_API_HOST, message);
+                return Err(message.to_string());
             }
+        };
 
-            println!("Finished!");
-        } ,
-        Err(err) => {
-            println!("Could not connect: '{}'", err);
+        if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+            println!("Connected but received an erroneous HTTP response: {:?}", response);
+            return Err(format!("Connected but received an erroneous HTTP status: {:?}", response.status()));
         }
-    };
+
+        println!("Receiving WebSocket id");
+        let socket_id_message_result = socket.read_message();
+        let socket_id_message = match socket_id_message_result {
+            Ok(socket_id_message) => socket_id_message,
+            Err(message) => {
+                println!("Could not receive socket id message form socket: {}", message);
+                return Err(message.to_string());
+            }
+        };
+
+        let socket_id_message_text = socket_id_message.to_text().unwrap();
+        let socket_id_message_json_text = socket_id_message_text.strip_prefix("0").unwrap();
+        let v: Value = serde_json::from_str(socket_id_message_json_text).unwrap();
+        let server_socket_id = format!("{}", v["sid"].as_str().unwrap());
+        let bearer_access_token = format!("Bearer {}{}", server_socket_id, account_token);
+
+        println!("Received WebSocket id '{}', now receiving dummy WebSocket message", server_socket_id);
+        // Not sure why, but fxcm sends another message right away.
+        let dummy_message = socket.read_message();
+        println!("Received dummy message {:?}", dummy_message);
+
+        let fxcm_service = FxcmTradingService {
+            account_token : String::from(account_token),
+            socket_id : String::from(&server_socket_id),
+            authorization_token : String::from(&bearer_access_token),
+            socket : socket
+        };
+
+        println!("Sending a test HTTP request");
+        let http_resp_result = fxcm_service.http_get("trading/get_instruments/", &HashMap::new());
+        if let Err(message) = http_resp_result {
+            println!("Connected, but could not process a simple HTTP request: {}", message);
+            return Err(message.to_string());
+        }
+
+        println!("Successfully established and tested connection to {}", FXCM_API_HOST);
+        Ok(fxcm_service)
+    }
+
+    fn http_get(&self, uri : &str, param_map : &HashMap<String, String>) -> reqwest::Result<reqwest::blocking::Response> {
+        let mut query_str = String::new();
+        for (k, v) in param_map {
+            query_str.push_str(k);
+            query_str.push_str("=");
+            query_str.push_str(v);
+        }
+
+        let url_string = format!("https://{}:443/{}?{}", FXCM_API_HOST, uri, query_str);
+        let url = url::Url::parse(&url_string).unwrap();
+
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(url)
+            .header("Authorization", &self.authorization_token)
+            .header("Accept", "application/json")
+            .header("Host", FXCM_API_HOST)
+            .header("User-Agent", "request")
+            .header("Content-Type", "application/x-www-form-urlencoded'")
+            .header("Connection", "close")
+            .send();
+        resp
+    }
+}
+
+impl trading_bot::TradingService for FxcmTradingService {
+    fn get_trade_symbols(&mut self) -> Result<Vec<String>, trading_bot::TradingError> {
+        let http_resp_result = self.http_get("trading/get_instruments/", &HashMap::new());
+        println!("Instruments response: {:?}", http_resp_result.unwrap().text());
+        Ok(Vec::new())
+    }
+
+    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_bot::TradeId, trading_bot::TradingError> {
+        unimplemented!()
+    }
+
+    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_bot::TradeId, trading_bot::TradingError> {
+        unimplemented!()
+    }
+
+    fn close_trade(&mut self, trade_id : &trading_bot::TradeId) -> Option<trading_bot::TradingError> {
+        unimplemented!()
+    }
+}
+
+fn main() -> Result<(), String> {
+    let mut service = FxcmTradingService::create("4979200962b698e88aa1492f4e62f6e30e338a27")?;
+
+    trading_bot::run(&mut service);
+    Ok(())
 }

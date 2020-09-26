@@ -912,6 +912,7 @@ dependencies = [
 name = "trading-bot"
 version = "0.1.0"
 dependencies = [
+ "http",
  "reqwest",
  "serde_json",
  "tungstenite",
