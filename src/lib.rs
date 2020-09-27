@@ -1,9 +1,6 @@
 pub type TradeId = String;
 
-#[derive(Debug)]
-pub enum TradingError {
-    Unauthorized
-}
+pub type TradingError = String;
 
 pub trait TradingService {
     fn get_trade_symbols(&mut self) -> Result<Vec<String>, TradingError>;

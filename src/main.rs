@@ -98,9 +98,32 @@ impl FxcmTradingService {
 
 impl trading_bot::TradingService for FxcmTradingService {
     fn get_trade_symbols(&mut self) -> Result<Vec<String>, trading_bot::TradingError> {
-        let http_resp_result = self.http_get("trading/get_instruments/", &HashMap::new());
-        println!("Instruments response: {:?}", http_resp_result.unwrap().text());
-        Ok(Vec::new())
+        let http_get_result = self.http_get("trading/get_instruments/", &HashMap::new());
+
+        let response = match http_get_result {
+            Ok(response) => response,
+            Err(message) => return Err(message.to_string())
+        };
+
+        if response.status() != http::StatusCode::OK {
+            return Err(format!("Erroneous HTTP status returned: {}", response.status()));
+        }
+
+        let response_body = match response.text() {
+            Ok(text) => text,
+            Err(message) => return Err(message.to_string())
+        };
+
+        let json_root : Value = match serde_json::from_str(&response_body) {
+            Ok(json_root) => json_root,
+            Err(message) => return Err(format!("Failed to parse response '{}' a json: {}", response_body, message))
+        };
+
+        let maybe_instrument_array = &json_root["data"]["instrument"].as_array();
+        let maybe_symbols = maybe_instrument_array.map(|a| {
+            a.iter().map(|e| e["symbol"].as_str().map(String::from)).flatten().collect::<Vec<String>>()
+        });
+        maybe_symbols.map_or(Err(format!("Failed to read symbols from json: {:?}", json_root)), |s| Ok(s))
     }
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_bot::TradeId, trading_bot::TradingError> {
