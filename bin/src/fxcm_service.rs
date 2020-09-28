@@ -1,10 +1,10 @@
 use serde_json::Value;
-use trading_bot;
+use trading_lib;
 use std::collections::HashMap;
 
 static FXCM_API_HOST: &str = "api-demo.fxcm.com";
 
-struct FxcmTradingService {
+pub struct FxcmTradingService {
     account_token : String,
     socket_id : String,
     authorization_token : String,
@@ -12,7 +12,7 @@ struct FxcmTradingService {
 }
 
 impl FxcmTradingService {
-    fn create(account_token : &str) -> Result<FxcmTradingService, String> {
+    pub fn create(account_token : &str) -> Result<FxcmTradingService, String> {
         println!("Connecting to {}", FXCM_API_HOST);
 
         // Token validity can be tested in http://restapi101.herokuapp.com/
@@ -96,8 +96,8 @@ impl FxcmTradingService {
     }
 }
 
-impl trading_bot::TradingService for FxcmTradingService {
-    fn get_trade_symbols(&mut self) -> Result<Vec<String>, trading_bot::TradingError> {
+impl trading_lib::TradingService for FxcmTradingService {
+    fn get_trade_symbols(&mut self) -> Result<Vec<String>, trading_lib::TradingError> {
         let http_get_result = self.http_get("trading/get_instruments/", &HashMap::new());
 
         let response = match http_get_result {
@@ -126,22 +126,15 @@ impl trading_bot::TradingService for FxcmTradingService {
         maybe_symbols.map_or(Err(format!("Failed to read symbols from json: {:?}", json_root)), |s| Ok(s))
     }
 
-    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_bot::TradeId, trading_bot::TradingError> {
+    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_lib::TradeId, trading_lib::TradingError> {
         unimplemented!()
     }
 
-    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_bot::TradeId, trading_bot::TradingError> {
+    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_lib::TradeId, trading_lib::TradingError> {
         unimplemented!()
     }
 
-    fn close_trade(&mut self, trade_id : &trading_bot::TradeId) -> Option<trading_bot::TradingError> {
+    fn close_trade(&mut self, trade_id : &trading_lib::TradeId) -> Option<trading_lib::TradingError> {
         unimplemented!()
     }
-}
-
-fn main() -> Result<(), String> {
-    let mut service = FxcmTradingService::create("4979200962b698e88aa1492f4e62f6e30e338a27")?;
-
-    trading_bot::run(&mut service);
-    Ok(())
 }

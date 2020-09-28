@@ -915,9 +915,14 @@ dependencies = [
  "http",
  "reqwest",
  "serde_json",
+ "trading-lib",
  "tungstenite",
  "url",
 ]
+
+[[package]]
+name = "trading-lib"
+version = "0.1.0"
 
 [[package]]
 name = "try-lock"
