@@ -5,6 +5,14 @@ use std::collections::HashMap;
 
 static FXCM_API_HOST: &str = "api-demo.fxcm.com";
 
+enum FxcmTableType {
+    OpenPosition = 1,
+    ClosedPosition,
+    Order,
+    Summary,
+    Account
+}
+
 pub struct FxcmTradingService {
     account_token : String,
     socket_id : String,
@@ -210,8 +218,8 @@ impl FxcmTradingService {
         };
 
         let message_text = message.to_text().unwrap();
+        println!("JSON: {:?}", message_text);
         let message_json_text = message_text.trim_start_matches(|c| c >= '0' && c <= '9');
-        // println!("JSON: {:?}", message_json_text);
         let v: Value = serde_json::from_str(message_json_text).unwrap();
         Ok(v)
     }
@@ -234,9 +242,16 @@ impl FxcmTradingService {
         println!("Received order id: {}", order_id);
 
         println!("Receiving Trade Id event");
-        let trade_event_json = FxcmTradingService::read_message_from_socket(&mut self.socket).unwrap();
-        let nested_json = trade_event_json.as_array().unwrap()[1].as_str().unwrap();
-        let v: Value = serde_json::from_str(nested_json).unwrap();
+        let v = loop {
+            let trade_event_json = FxcmTradingService::read_message_from_socket(&mut self.socket).unwrap();
+            let nested_json = trade_event_json.as_array().unwrap()[1].as_str().unwrap();
+            let v: Value = serde_json::from_str(nested_json).unwrap();
+
+            if v["t"].as_u64().unwrap() == FxcmTableType::Order as u64 &&
+                v["action"].is_string() && v["action"].as_str().unwrap() == "I" {
+                break v;
+            }
+        };
         
         let trade_id = v["tradeId"].as_str().unwrap();
         println!("Received trade-id: {}", trade_id);

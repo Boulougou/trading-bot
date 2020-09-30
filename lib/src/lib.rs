@@ -16,19 +16,31 @@ pub fn run(service : &mut impl TradingService) {
         Err(msg) => println!("Failed to retrieve trade symbols, {:?}", msg)
     }
 
-    let open_result = service.open_buy_trade("EUR/CAD", 1);
-
-    let trade_id = match open_result {
+    let open_buy_result = service.open_buy_trade("EUR/CAD", 1);
+    let buy_trade_id = match open_buy_result {
         Ok(trade_id) => trade_id,
         Err(error_msg) => { println!("Failed {:?}", error_msg); return; }
     };
 
-    println!("Opened buy trade successfully {}", trade_id);
+    let open_sell_result = service.open_sell_trade("EUR/CAD", 1);
+    let sell_trade_id = match open_sell_result {
+        Ok(trade_id) => trade_id,
+        Err(error_msg) => { println!("Failed {:?}", error_msg); return; }
+    };
+
+    println!("Opened buy trade successfully {}", buy_trade_id);
+    println!("Opened sell trade successfully {}", sell_trade_id);
     std::thread::sleep(std::time::Duration::from_secs(10));
 
-    let close_result = service.close_trade(&trade_id);
+    let close_result = service.close_trade(&sell_trade_id);
     match close_result {
-        None => println!("Successfully closed trade with id, {}", trade_id),
-        Some(error) => println!("Failed to close trade with id {}, error: {}", trade_id, error),
+        None => println!("Successfully closed trade with id, {}", sell_trade_id),
+        Some(error) => println!("Failed to close trade with id {}, error: {}", sell_trade_id, error),
+    }
+
+    let close_result = service.close_trade(&buy_trade_id);
+    match close_result {
+        None => println!("Successfully closed trade with id, {}", buy_trade_id),
+        Some(error) => println!("Failed to close trade with id {}, error: {}", buy_trade_id, error),
     }
 }
