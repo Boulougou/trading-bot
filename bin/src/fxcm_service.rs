@@ -11,7 +11,8 @@ pub struct FxcmTradingService {
     authorization_token : String,
     socket : tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>,
     account_id : String,
-    symbol_to_offer_id : HashMap<String, i32>
+    symbol_to_offer_id : HashMap<String, i32>,
+    trade_amounts : HashMap<trading_lib::TradeId, u32>
 }
 
 impl FxcmTradingService {
@@ -42,18 +43,7 @@ impl FxcmTradingService {
         }
 
         println!("Receiving WebSocket id");
-        let socket_id_message_result = socket.read_message();
-        let socket_id_message = match socket_id_message_result {
-            Ok(socket_id_message) => socket_id_message,
-            Err(message) => {
-                println!("Could not receive socket id message form socket: {}", message);
-                return Err(message.to_string());
-            }
-        };
-
-        let socket_id_message_text = socket_id_message.to_text().unwrap();
-        let socket_id_message_json_text = socket_id_message_text.strip_prefix("0").unwrap();
-        let v: Value = serde_json::from_str(socket_id_message_json_text).unwrap();
+        let v: Value = FxcmTradingService::read_message_from_socket(&mut socket).unwrap();
         let server_socket_id = format!("{}", v["sid"].as_str().unwrap());
         let bearer_access_token = format!("Bearer {}{}", server_socket_id, account_token);
 
@@ -68,7 +58,8 @@ impl FxcmTradingService {
             authorization_token : String::from(&bearer_access_token),
             socket : socket,
             symbol_to_offer_id : HashMap::new(),
-            account_id : String::new()
+            account_id : String::new(),
+            trade_amounts : HashMap::new()
         };
 
         {
@@ -102,6 +93,18 @@ impl FxcmTradingService {
             fxcm_service.account_id = maybe_accounts_array.map(|accounts| String::from(accounts[0]["accountId"].as_str().unwrap())).unwrap();
 
             println!("AccountId: {}", fxcm_service.account_id);
+        }
+
+        {
+            println!("Subscribing to order table");
+            let mut params = Vec::new();
+            params.push((String::from("models"), String::from("Order")));
+            let json_root : Value = match fxcm_service.http_post_json("trading/subscribe/", &params) {
+                Ok(json_root) => json_root,
+                Err(message) => return Err(message)
+            };
+
+            println!("Subscribed to order table: {}", json_root);
         }
 
         println!("Successfully established and tested connection to {}", FXCM_API_HOST);
@@ -195,6 +198,52 @@ impl FxcmTradingService {
 
         Ok(json_root)
     }
+
+    fn read_message_from_socket(socket : &mut tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>,) -> Result<serde_json::Value, String> {
+        let message_result = socket.read_message();
+        let message = match message_result {
+            Ok(message) => message,
+            Err(error) => {
+                println!("Could not receive message form socket: {}", error);
+                return Err(error.to_string());
+            }
+        };
+
+        let message_text = message.to_text().unwrap();
+        let message_json_text = message_text.trim_start_matches(|c| c >= '0' && c <= '9');
+        // println!("JSON: {:?}", message_json_text);
+        let v: Value = serde_json::from_str(message_json_text).unwrap();
+        Ok(v)
+    }
+
+    fn open_trade(&mut self, symbol : &str, amount_in_lots : u32, is_buy : bool) -> Result<trading_lib::TradeId, trading_lib::TradingError> {
+        let mut open_trade_params = Vec::new();
+        open_trade_params.push((String::from("account_id"), self.account_id.clone()));
+        open_trade_params.push((String::from("is_buy"), is_buy.to_string()));
+        open_trade_params.push((String::from("amount"), amount_in_lots.to_string()));
+        open_trade_params.push((String::from("time_in_force"), String::from("GTC")));
+        open_trade_params.push((String::from("order_type"), String::from("AtMarket")));
+        open_trade_params.push((String::from("symbol"), String::from(symbol)));
+        let json_root : Value = match self.http_post_json("trading/open_trade/", &open_trade_params) {
+            Ok(json_root) => json_root,
+            Err(message) => return Err(message)
+        };
+
+        println!("Open trade json: {}", json_root);
+        let order_id = json_root["data"]["orderId"].as_u64().unwrap();
+        println!("Received order id: {}", order_id);
+
+        println!("Receiving Trade Id event");
+        let trade_event_json = FxcmTradingService::read_message_from_socket(&mut self.socket).unwrap();
+        let nested_json = trade_event_json.as_array().unwrap()[1].as_str().unwrap();
+        let v: Value = serde_json::from_str(nested_json).unwrap();
+        
+        let trade_id = v["tradeId"].as_str().unwrap();
+        println!("Received trade-id: {}", trade_id);
+
+        self.trade_amounts.insert(String::from(trade_id), amount_in_lots);
+        Ok(String::from(trade_id))
+    }
 }
 
 impl trading_lib::TradingService for FxcmTradingService {
@@ -212,29 +261,27 @@ impl trading_lib::TradingService for FxcmTradingService {
     }
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_lib::TradeId, trading_lib::TradingError> {
-        let mut open_trade_params = Vec::new();
-        open_trade_params.push((String::from("account_id"), self.account_id.clone()));
-        open_trade_params.push((String::from("is_buy"), String::from("true")));
-        open_trade_params.push((String::from("amount"), amount_in_lots.to_string()));
-        open_trade_params.push((String::from("time_in_force"), String::from("GTC")));
-        open_trade_params.push((String::from("order_type"), String::from("AtMarket")));
-        open_trade_params.push((String::from("symbol"), String::from(symbol)));
-        let json_root : Value = match self.http_post_json("trading/open_trade/", &open_trade_params) {
-            Ok(json_root) => json_root,
-            Err(message) => return Err(message)
-        };
-
-        println!("Open trade json: {}", json_root);
-        let order_id = json_root["data"]["orderId"].as_u64().unwrap();
-        println!("Received order id: {}", order_id);
-        Err(String::from("temp implementation"))
+        self.open_trade(&symbol, amount_in_lots, true)
     }
 
     fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> Result<trading_lib::TradeId, trading_lib::TradingError> {
-        unimplemented!()
+        self.open_trade(&symbol, amount_in_lots, false)
     }
 
     fn close_trade(&mut self, trade_id : &trading_lib::TradeId) -> Option<trading_lib::TradingError> {
-        unimplemented!()
+        let amount = self.trade_amounts[trade_id];
+
+        let mut close_trade_params = Vec::new();
+        close_trade_params.push((String::from("trade_id"), String::from(trade_id)));
+        close_trade_params.push((String::from("amount"), amount.to_string()));
+        close_trade_params.push((String::from("time_in_force"), String::from("GTC")));
+        close_trade_params.push((String::from("order_type"), String::from("AtMarket")));
+        let json_root : Value = match self.http_post_json("trading/close_trade/", &close_trade_params) {
+            Ok(json_root) => json_root,
+            Err(message) => return Some(message)
+        };
+
+        println!("Received close resp: {}", json_root);
+        None
     }
 }

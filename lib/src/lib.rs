@@ -16,11 +16,19 @@ pub fn run(service : &mut impl TradingService) {
         Err(msg) => println!("Failed to retrieve trade symbols, {:?}", msg)
     }
 
-    let open_result = service.open_buy_trade("AUD/USD", 1);
+    let open_result = service.open_buy_trade("EUR/CAD", 1);
 
-    match open_result {
-        Ok(trade_id) => println!("Success {}", trade_id),
-        Err(error_msg) => println!("Failed {:?}", error_msg)
+    let trade_id = match open_result {
+        Ok(trade_id) => trade_id,
+        Err(error_msg) => { println!("Failed {:?}", error_msg); return; }
+    };
+
+    println!("Opened buy trade successfully {}", trade_id);
+    std::thread::sleep(std::time::Duration::from_secs(10));
+
+    let close_result = service.close_trade(&trade_id);
+    match close_result {
+        None => println!("Successfully closed trade with id, {}", trade_id),
+        Some(error) => println!("Failed to close trade with id {}, error: {}", trade_id, error),
     }
-
 }
