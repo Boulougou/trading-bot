@@ -16,11 +16,11 @@ pub fn run(service : &mut impl TradingService) {
         Err(msg) => println!("Failed to retrieve trade symbols, {:?}", msg)
     }
 
-    // let openResult = service.open_buy_trade("EUR/USD", 100);
+    let open_result = service.open_buy_trade("AUD/USD", 1);
 
-    // match openResult {
-    //     Ok(trade_id) => println!("Success {}", trade_id),
-    //     Err(error_msg) => println!("Failed {:?}", error_msg)
-    // }
+    match open_result {
+        Ok(trade_id) => println!("Success {}", trade_id),
+        Err(error_msg) => println!("Failed {:?}", error_msg)
+    }
 
 }

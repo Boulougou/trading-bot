@@ -913,6 +913,7 @@ name = "trading-bot"
 version = "0.1.0"
 dependencies = [
  "http",
+ "native-tls",
  "reqwest",
  "serde_json",
  "trading-lib",
