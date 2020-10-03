@@ -14,3 +14,4 @@ reqwest = { version = "0.10", features = ["blocking", "json"] }
 serde_json = "1.0.57"
 http = "0.2.1"
 native-tls = "0.2.4"
+anyhow = "1.0.32"
