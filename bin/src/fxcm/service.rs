@@ -14,8 +14,6 @@ enum FxcmTableType {
 }
 
 pub struct FxcmTradingService {
-    _account_token : String,
-    _socket_id : String,
     host : String,
     authorization_token : String,
     socket : tungstenite::WebSocket<native_tls::TlsStream<TcpStream>>,
@@ -29,15 +27,15 @@ impl FxcmTradingService {
         let mut fxcm_service = FxcmTradingService::connect(api_host, account_token).with_context(|| format!("Failed to connect to '{}'", api_host))?;
 
         println!("Retrieving symbol to offer mapping");
-        fxcm_service.symbol_to_offer_id = FxcmTradingService::retrieve_symbol_to_offer_id_map(api_host, account_token).
+        fxcm_service.symbol_to_offer_id = FxcmTradingService::retrieve_symbol_to_offer_id_map(api_host, &fxcm_service.authorization_token).
             context("Failed to retrieve symbol to offer mapping")?;
 
         println!("Retrieving account id");
-        fxcm_service.account_id = FxcmTradingService::retrieve_account_id(api_host, account_token).
+        fxcm_service.account_id = FxcmTradingService::retrieve_account_id(api_host, &fxcm_service.authorization_token).
             context("Failed to retrieve account id")?;
 
         println!("Subscribing to order table");
-        FxcmTradingService::subscribe_to_order_table(api_host, account_token).
+        FxcmTradingService::subscribe_to_order_table(api_host, &fxcm_service.authorization_token).
             context("Failed to subscribe to order table")?;
 
         println!("Successfully established connection to {}", api_host);
@@ -74,8 +72,6 @@ impl FxcmTradingService {
         println!("Received dummy message {:?}", dummy_message);
 
         let fxcm_service = FxcmTradingService {
-            _account_token : String::from(account_token),
-            _socket_id : String::from(server_socket_id),
             host : String::from(api_host),
             authorization_token : String::from(&bearer_access_token),
             socket : socket,
@@ -153,6 +149,26 @@ impl FxcmTradingService {
         self.trade_amounts.insert(String::from(trade_id), amount_in_lots);
         Ok(String::from(trade_id))
     }
+
+    fn create_history_step(json_candle : &serde_json::Value) -> anyhow::Result<trading_lib::HistoryStep> {
+        let timestamp = json_candle[0].as_u64().ok_or_else(|| anyhow!("Could not find timestamp in {}", json_candle))? as u32;
+        let bid_open = json_candle[1].as_f64().ok_or_else(|| anyhow!("Could not find bid_open in {}", json_candle))? as f32;
+        let bid_close = json_candle[2].as_f64().ok_or_else(|| anyhow!("Could not find bid_close in {}", json_candle))? as f32;
+        let bid_high = json_candle[3].as_f64().ok_or_else(|| anyhow!("Could not find bid_high in {}", json_candle))? as f32;
+        let bid_low = json_candle[4].as_f64().ok_or_else(|| anyhow!("Could not find bid_low in {}", json_candle))? as f32;
+        let ask_open = json_candle[5].as_f64().ok_or_else(|| anyhow!("Could not find ask_open in {}", json_candle))? as f32;
+        let ask_close = json_candle[6].as_f64().ok_or_else(|| anyhow!("Could not find ask_close in {}", json_candle))? as f32;
+        let ask_high = json_candle[7].as_f64().ok_or_else(|| anyhow!("Could not find ask_high in {}", json_candle))? as f32;
+        let ask_low = json_candle[8].as_f64().ok_or_else(|| anyhow!("Could not find ask_low in {}", json_candle))? as f32;
+
+        let step = trading_lib::HistoryStep {
+            timestamp : timestamp,
+            bid_candle : trading_lib::Candlestick { price_open : bid_open, price_close : bid_close, price_high : bid_high, price_low : bid_low },
+            ask_candle : trading_lib::Candlestick { price_open : ask_open, price_close : ask_close, price_high : ask_high, price_low : ask_low }
+        };
+
+        Ok(step)
+    }
 }
 
 impl trading_lib::TradingService for FxcmTradingService {
@@ -164,6 +180,25 @@ impl trading_lib::TradingService for FxcmTradingService {
             a.iter().map(|e| e["symbol"].as_str().map(String::from)).flatten().collect::<Vec<String>>()
         });
         maybe_symbols.map_or_else(|| Err(anyhow!("Failed to read symbols from json: {:?}", json_root)), |s| Ok(s))
+    }
+
+    fn get_symbol_history(&mut self, symbol : &str, timeframe : trading_lib::HistoryTimeframe, num_entries : u32) -> anyhow::Result<Vec<trading_lib::HistoryStep>> {
+        let offer_id = self.symbol_to_offer_id.get(symbol).ok_or_else(|| anyhow!("Could not find symbol {}", symbol))?;
+
+        let url = format!("candles/{}/{}", offer_id, utils::convert_timeframe(&timeframe));
+        let http_params = vec!(
+            (String::from("num"), num_entries.to_string()));
+        let json_root : Value = utils::http_get_json(&self.authorization_token, &self.host, &url, &http_params)?;
+
+        let candles_array = &json_root["candles"].as_array().
+            ok_or_else(|| anyhow!("No 'candles' array in response: {}", json_root))?;
+
+        let candles = candles_array.iter().
+            map(FxcmTradingService::create_history_step).
+            flatten().
+            collect::<Vec<trading_lib::HistoryStep>>();
+
+        Ok(candles)
     }
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<trading_lib::TradeId> {

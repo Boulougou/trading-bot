@@ -1,32 +1,53 @@
 pub type TradeId = String;
 
 #[derive(Debug)]
-pub struct TradingError(String);
-
-impl std::fmt::Display for TradingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        let TradingError(text) = self;
-        text.fmt(f)
-    }
+pub struct Candlestick {
+    pub price_open : f32,
+    pub price_close : f32,
+    pub price_high : f32,
+    pub price_low : f32
 }
 
-impl std::convert::From<String> for TradingError {
-    fn from(text : String) -> Self {
-        TradingError(text)
-    }
+#[derive(Debug)]
+pub struct HistoryStep {
+    pub timestamp : u32,
+    pub bid_candle : Candlestick,
+    pub ask_candle : Candlestick
 }
 
-impl std::error::Error for TradingError {
+pub enum HistoryTimeframe {
+    Min1,
+    Min5,
+    Min15,
+    Min30,
+    Hour1,
+    Hour2,
+    Hour3,
+    Hour4,
+    Hour6,
+    Hour8,
+    Day1,
+    Week1,
+    Month1
 }
 
 pub trait TradingService {
     fn get_trade_symbols(&mut self) -> anyhow::Result<Vec<String>>;
+    fn get_symbol_history(&mut self, symbol : &str, timeframe : HistoryTimeframe, num_entries : u32) -> anyhow::Result<Vec<HistoryStep>>;
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<TradeId>;
     fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<TradeId>;
     fn close_trade(&mut self, trade_id : &TradeId) -> anyhow::Result<()>;
 }
 
 pub fn run(service : &mut impl TradingService) -> anyhow::Result<()> {
+    let trade_symbols_result = service.get_symbol_history("EUR/CAD", HistoryTimeframe::Min1, 100);
+    match trade_symbols_result {
+        Ok(symbols) => println!("get_symbol_history, {:?}", symbols),
+        Err(msg) => println!("Failed to get_symbol_history, {:?}", msg)
+    }
+
+    Ok(())
+/*
     let trade_symbols_result = service.get_trade_symbols();
     match trade_symbols_result {
         Ok(symbols) => println!("Retrieved trade symbols, {:?}", symbols),
@@ -59,5 +80,5 @@ pub fn run(service : &mut impl TradingService) -> anyhow::Result<()> {
     match close_result {
         Ok(()) => { println!("Successfully closed trade with id, {}", buy_trade_id); Ok(()) }
         Err(error) => { println!("Failed to close trade with id {}, error: {}", buy_trade_id, error); Err(error) }
-    }
+    }*/
 }
