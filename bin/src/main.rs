@@ -1,8 +1,9 @@
 use trading_lib;
 mod fxcm;
 use rand::{SeedableRng, Rng, seq::SliceRandom};
+use tch::nn::{Module, OptimizerConfig};
 
-fn run_linear_regression() {
+fn _run_linear_regression() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1138);
     let mut x : Vec<f32> = (0..100).map(|_s| rng.gen::<f32>()).collect();
     x.shuffle(&mut rng);
@@ -64,11 +65,54 @@ fn run_linear_regression() {
     b.print();
 }
 
+fn run_neural_network() {
+    let var_store = tch::nn::VarStore::new(tch::Device::Cpu);
+
+    let num_inputs = 3;
+    let num_hidden_nodes = 3;
+    let num_outputs = 1;
+    let neural_net = tch::nn::seq()
+        .add(tch::nn::linear(&var_store.root() / "layer1", num_inputs, num_hidden_nodes, Default::default()))
+        // .add_fn(|xs| xs.sigmoid())
+        .add(tch::nn::linear(var_store.root(), num_hidden_nodes, num_outputs, Default::default()));
+
+    let mut optimizer = tch::nn::Adam::default().build(&var_store, 1e-2).unwrap();
+
+    for epoch in 1..400 {
+        let input_tensor = tch::Tensor::
+            of_slice(&[1.0f32, 6.0, 3.0, 9.0, 2.0, 7.0, 3.0, 5.0, 3.0]).
+            reshape(&[3, num_inputs]);
+        let expected_output_tensor = tch::Tensor::
+            of_slice(&[10.0f32, 18.0, 11.0]).
+            reshape(&[3, num_outputs]);
+        // println!("AAAAAAA: {:?} => {:?}", input_tensor, expected_output_tensor);
+        let output_tensor = neural_net.forward(&input_tensor);
+        // let error = output_tensor - expected_output_tensor;
+        let loss_tensor = output_tensor.mse_loss(&expected_output_tensor, tch::Reduction::Mean);
+
+        optimizer.backward_step(&loss_tensor);
+        
+        println!(
+            "epoch: {:4} train loss: {:8.5}",
+            epoch,
+            f64::from(&loss_tensor),
+            // 100. * f64::from(&test_accuracy),
+        );
+    }
+
+    let input_tensor = tch::Tensor::
+        of_slice(&[5.0f32, 2.0, 1.0, 8.0, 8.0, 9.0, 5.0, 5.0, 3.0]).
+        reshape(&[3, num_inputs]);
+    let output_tensor = neural_net.forward(&input_tensor);
+    output_tensor.print();
+}
+
 fn main() -> anyhow::Result<()> {
     // let mut service = fxcm::service::FxcmTradingService::create("api-demo.fxcm.com", "4979200962b698e88aa1492f4e62f6e30e338a27")?;
 
     // trading_lib::run(&mut service)
 
-    run_linear_regression();
+    // run_linear_regression();
+    run_neural_network();
     Ok(())
 }
