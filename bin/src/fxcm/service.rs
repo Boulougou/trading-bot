@@ -3,6 +3,7 @@ use serde_json::Value;
 use trading_lib;
 use std::collections::HashMap;
 use anyhow::{anyhow, Context};
+use chrono::{DateTime, Utc};
 use crate::fxcm::utils;
 
 enum FxcmTableType {
@@ -182,12 +183,15 @@ impl trading_lib::TradingService for FxcmTradingService {
         maybe_symbols.map_or_else(|| Err(anyhow!("Failed to read symbols from json: {:?}", json_root)), |s| Ok(s))
     }
 
-    fn get_symbol_history(&mut self, symbol : &str, timeframe : trading_lib::HistoryTimeframe, num_entries : u32) -> anyhow::Result<Vec<trading_lib::HistoryStep>> {
+    fn get_symbol_history(&mut self, symbol : &str, timeframe : trading_lib::HistoryTimeframe,
+                          since_date : &DateTime<Utc>, to_date : &DateTime<Utc>) -> anyhow::Result<Vec<trading_lib::HistoryStep>> {
         let offer_id = self.symbol_to_offer_id.get(symbol).ok_or_else(|| anyhow!("Could not find symbol {}", symbol))?;
 
         let url = format!("candles/{}/{}", offer_id, utils::convert_timeframe(&timeframe));
         let http_params = vec!(
-            (String::from("num"), num_entries.to_string()));
+            (String::from("num"), String::from("10")),
+            (String::from("from"), /* String::from("1602235500") */since_date.timestamp().to_string()),
+            (String::from("to"), /*String::from("1602404400")*/ to_date.timestamp().to_string()));
         let json_root : Value = utils::http_get_json(&self.authorization_token, &self.host, &url, &http_params)?;
 
         let candles_array = &json_root["candles"].as_array().
@@ -200,6 +204,10 @@ impl trading_lib::TradingService for FxcmTradingService {
 
         Ok(candles)
     }
+    
+    fn max_history_steps_per_call(&mut self) -> anyhow::Result<u32> {
+        Ok(10000)
+     }
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<trading_lib::TradeId> {
         self.open_trade(&symbol, amount_in_lots, true)

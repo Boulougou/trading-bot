@@ -33,6 +33,7 @@ fn http_get(authorization_token : &str, host : &str, uri : &str, param_map : &Ve
 
     let url_string = format!("https://{}:443/{}?{}", host, uri, query_str);
     let url = url::Url::parse(&url_string)?;
+    println!("=======> GET {}", url);
 
     let client = reqwest::blocking::Client::new();
     let resp = client
@@ -53,6 +54,7 @@ fn http_post(authorization_token : &str, host : &str, uri : &str, param_map : &V
 
     let url_string = format!("https://{}:443/{}", host, uri);
     let url = url::Url::parse(&url_string)?;
+    println!("=======> POST {}", url);
 
     let query_str_bytes = query_str.into_bytes();
     let client = reqwest::blocking::Client::new();

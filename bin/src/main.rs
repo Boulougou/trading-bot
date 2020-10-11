@@ -1,7 +1,11 @@
+use chrono::{Utc, Duration};
+use std::ops::Sub;
 use trading_lib;
-mod fxcm;
 use rand::{SeedableRng, Rng, seq::SliceRandom};
 use tch::nn::{Module, OptimizerConfig};
+
+mod fxcm;
+mod file_storage;
 
 fn _run_linear_regression() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(1138);
@@ -108,11 +112,14 @@ fn run_neural_network() {
 }
 
 fn main() -> anyhow::Result<()> {
-    // let mut service = fxcm::service::FxcmTradingService::create("api-demo.fxcm.com", "4979200962b698e88aa1492f4e62f6e30e338a27")?;
+    let mut service = fxcm::service::FxcmTradingService::create("api-demo.fxcm.com", "4979200962b698e88aa1492f4e62f6e30e338a27")?;
+    let mut storage = file_storage::FileStorage::create()?;
 
-    // trading_lib::run(&mut service)
+    let to_date = Utc::now();
+    let from_date = to_date.sub(Duration::days(6));
+    trading_lib::fetch_symbol_history(&mut service, &mut storage, "EUR/USD", trading_lib::HistoryTimeframe::Min1, &from_date, &to_date)
 
     // run_linear_regression();
-    run_neural_network();
-    Ok(())
+    // run_neural_network();
+    // Ok(())
 }
