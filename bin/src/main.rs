@@ -1,8 +1,10 @@
-use chrono::{Utc, Duration};
+use chrono::*;
 use std::ops::Sub;
 use trading_lib;
 use rand::{SeedableRng, Rng, seq::SliceRandom};
 use tch::nn::{Module, OptimizerConfig};
+use clap::arg_enum;
+use structopt::StructOpt;
 
 mod fxcm;
 mod file_storage;
@@ -256,16 +258,69 @@ impl trading_lib::TradingModel for PyTorchModel {
 
 }
 
+arg_enum! {
+    #[derive(Debug)]
+    #[allow(non_camel_case_types)]
+    enum Mode {
+        fetch,
+        train
+    }
+}
+
+/// A basic example
+#[derive(StructOpt, Debug)]
+#[structopt(name = "trading-bot")]
+struct Opt {
+
+    #[structopt(possible_values = &Mode::variants())]
+    mode : Mode,
+
+    #[structopt(short, long, required_if("mode", "fetch"))]
+    symbol : Option<String>,
+
+    #[structopt(short, long, required_if("mode", "fetch"))]
+    timeframe : Option<trading_lib::HistoryTimeframe>,
+
+    #[structopt(long, required_if("mode", "fetch"))]
+    from_date : Option<String>,
+
+    #[structopt(long)]
+    to_date : Option<String>,
+
+    #[structopt(short, long, required_if("mode", "train"))]
+    input : Option<String>,
+}
+
+fn parse_date(date_str : &str) -> anyhow::Result<DateTime<Utc>> {
+    let naive_date = NaiveDateTime::parse_from_str(date_str, "%Y%m%d%H%M")?;
+    Ok(Utc.ymd(naive_date.year(), naive_date.month(), naive_date.day()).and_hms(naive_date.hour(), naive_date.minute(), 0))
+}
+
 fn main() -> anyhow::Result<()> {
-    // let mut service = fxcm::service::FxcmTradingService::create("api-demo.fxcm.com", "4979200962b698e88aa1492f4e62f6e30e338a27")?;
-    let mut storage = file_storage::FileStorage::create()?;
+    let opt = Opt::from_args();
+    // println!("{:#?}", opt);
 
-    // let to_date = Utc::now();
-    // let from_date = to_date.sub(Duration::hours(3));
-    // trading_lib::fetch_symbol_history(&mut service, &mut storage, "EUR/USD", trading_lib::HistoryTimeframe::Min1, &from_date, &to_date)
+    let fxcm_host = "api-demo.fxcm.com";
+    let fxcm_token = "4979200962b698e88aa1492f4e62f6e30e338a27";
 
-    let mut model = PyTorchModel{};
-    trading_lib::train_model(&mut model, &mut storage, "EUR_USD_Min1_202010051004_202010111004")?;
+    match opt.mode {
+        Mode::fetch => {
+            let from_date = parse_date(&opt.from_date.unwrap())?;
+            let to_date = match opt.to_date {
+                None => Utc::now(),
+                Some(s) => parse_date(&s)?
+            };
+
+            let mut service = fxcm::service::FxcmTradingService::create(fxcm_host, fxcm_token)?;
+            let mut storage = file_storage::FileStorage::create()?;
+            trading_lib::fetch_symbol_history(&mut service, &mut storage, &opt.symbol.unwrap(), opt.timeframe.unwrap(), &from_date, &to_date)?;
+        },
+        Mode::train => {
+            let mut storage = file_storage::FileStorage::create()?;
+            let mut model = PyTorchModel{};
+            trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap())?;
+        }
+    }
 
     // run_linear_regression();
     // run_neural_network();

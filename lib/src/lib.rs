@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc, Duration};
 use std::ops::Add;
 use serde::{Deserialize, Serialize};
 use anyhow::{Context};
+use strum::EnumString;
 
 #[cfg(test)]
 use mockall::{automock, predicate::*};
@@ -25,7 +26,7 @@ pub struct HistoryStep {
     pub ask_candle : Candlestick
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy, EnumString)]
 pub enum HistoryTimeframe {
     Min1,
     Min5,
