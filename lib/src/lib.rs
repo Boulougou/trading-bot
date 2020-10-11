@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc, Duration};
 use std::ops::Add;
 use serde::{Deserialize, Serialize};
+use anyhow::{Context};
 
 #[cfg(test)]
 use mockall::{automock, predicate::*};
@@ -53,6 +54,11 @@ pub trait TradingService {
 }
 
 #[cfg_attr(test, automock)]
+pub trait TradingModel {
+    fn train(&mut self, input : &Vec<HistoryStep>) -> anyhow::Result<()>;
+}
+
+#[cfg_attr(test, automock)]
 pub trait Storage {
     fn save_symbol_history(&mut self, name : &str, history : &Vec<HistoryStep>) -> anyhow::Result<()>;
     fn load_symbol_history(&mut self, name : &str) -> anyhow::Result<Vec<HistoryStep>>;
@@ -99,15 +105,17 @@ pub fn fetch_symbol_history(service : &mut impl TradingService,
     Ok(())
 }
 
-pub fn run(service : &mut impl TradingService) -> anyhow::Result<()> {
-    // let trade_symbols_result = service.get_symbol_history("EUR/CAD", HistoryTimeframe::Min1, 100);
-    // match trade_symbols_result {
-    //     Ok(symbols) => println!("get_symbol_history, {:?}", symbols),
-    //     Err(msg) => println!("Failed to get_symbol_history, {:?}", msg)
-    // }
+pub fn train_model(model : &mut impl TradingModel,
+                   storage : &mut impl Storage,
+                   input_entry : &str) -> anyhow::Result<()> {
 
-    Ok(())
+    let history = storage.load_symbol_history(input_entry)?;
+    model.train(&history)
+}
+
 /*
+pub fn run(service : &mut impl TradingService, model : &mut impl TradingModel) -> anyhow::Result<()> {
+
     let trade_symbols_result = service.get_trade_symbols();
     match trade_symbols_result {
         Ok(symbols) => println!("Retrieved trade symbols, {:?}", symbols),
@@ -140,8 +148,8 @@ pub fn run(service : &mut impl TradingService) -> anyhow::Result<()> {
     match close_result {
         Ok(()) => { println!("Successfully closed trade with id, {}", buy_trade_id); Ok(()) }
         Err(error) => { println!("Failed to close trade with id {}, error: {}", buy_trade_id, error); Err(error) }
-    }*/
-}
+    }
+}*/
 
 
 #[cfg(test)]

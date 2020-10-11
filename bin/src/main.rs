@@ -111,15 +111,163 @@ fn run_neural_network() {
     output_tensor.print();
 }
 
+struct PyTorchModel {
+
+}
+
+impl trading_lib::TradingModel for PyTorchModel {
+
+    fn train(&mut self, history : &Vec<trading_lib::HistoryStep>) -> anyhow::Result<()> {
+        let training_window_size : u32 = 30;
+        let input_per_history_step : u32 = 2;
+        let prediction_window_size : u32 = 20;
+        let output_per_history_step : u32 = 2;
+
+        let (min_ever_bid_price, max_ever_bid_price) = {
+            let mut min_bid_price = f32::INFINITY;
+            let mut max_bid_price = f32::NEG_INFINITY;
+            for step in history {
+                min_bid_price = min_bid_price.min(step.bid_candle.price_low);
+                max_bid_price = max_bid_price.max(step.bid_candle.price_high);
+            }
+
+            (min_bid_price, max_bid_price)
+        };
+        let bid_price_range = max_ever_bid_price - min_ever_bid_price;
+
+        let (train_input, train_expected_output, test_input, test_expected_output) = {
+            let input_size = history.len() - prediction_window_size as usize - training_window_size as usize;
+            let train_input_size = (input_size as f32 * 0.8) as usize;
+
+            let (train_input, train_expected_output) = {
+                let mut input = Vec::new();
+                let mut expected_output = Vec::new();
+                for i in 0..train_input_size {
+                    let input_end = i + training_window_size as usize;
+                    let input_steps = &history[i..input_end];
+                    let future_steps = &history[input_end..input_end + prediction_window_size as usize];
+
+                    for s in input_steps {
+                        input.push((s.bid_candle.price_low - min_ever_bid_price) / bid_price_range);
+                        input.push((s.bid_candle.price_high - min_ever_bid_price) / bid_price_range);
+                    }
+
+                    let mut min_bid_price = f32::INFINITY;
+                    let mut max_bid_price = f32::NEG_INFINITY;
+                    for s in future_steps {
+                        min_bid_price = min_bid_price.min(s.bid_candle.price_low);
+                        max_bid_price = max_bid_price.max(s.bid_candle.price_high);
+                    }
+                    expected_output.push((min_bid_price - min_ever_bid_price) / bid_price_range);
+                    expected_output.push((max_bid_price - min_ever_bid_price) / bid_price_range);
+                }
+                (input, expected_output)
+            };
+
+            let (test_input, test_expected_output) = {
+                let mut input = Vec::new();
+                let mut expected_output = Vec::new();
+                for i in train_input_size..input_size {
+                    let input_end = i + training_window_size as usize;
+                    let input_steps = &history[i..input_end];
+                    let future_steps = &history[input_end..input_end + prediction_window_size as usize];
+
+                    for s in input_steps {
+                        input.push((s.bid_candle.price_low - min_ever_bid_price) / bid_price_range);
+                        input.push((s.bid_candle.price_high - min_ever_bid_price) / bid_price_range);
+                    }
+
+                    let mut min_bid_price = f32::INFINITY;
+                    let mut max_bid_price = f32::NEG_INFINITY;
+                    for s in future_steps {
+                        min_bid_price = min_bid_price.min(s.bid_candle.price_low);
+                        max_bid_price = max_bid_price.max(s.bid_candle.price_high);
+                    }
+                    expected_output.push((min_bid_price - min_ever_bid_price) / bid_price_range);
+                    expected_output.push((max_bid_price - min_ever_bid_price) / bid_price_range);
+                }
+                (input, expected_output)
+            };
+
+            (train_input, train_expected_output, test_input, test_expected_output)
+        };
+
+        let input_layer_size : i64 = input_per_history_step as i64 * training_window_size as i64;
+        let hidden_layer_size : i64 = input_layer_size / 2;
+        let output_layer_size : i64 = output_per_history_step as i64;
+
+        let var_store = tch::nn::VarStore::new(tch::Device::Cpu);
+        let neural_net = tch::nn::seq()
+            .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
+            // .add_fn(|xs| xs.sigmoid())
+            .add(tch::nn::linear(var_store.root(), hidden_layer_size, output_layer_size, Default::default()));
+
+        let mut optimizer = tch::nn::Adam::default().build(&var_store, 1e-3).unwrap();
+
+        let input_tensor = tch::Tensor::
+            of_slice(&train_input).
+            reshape(&[train_input.len() as i64 / input_layer_size, input_layer_size]);
+        let expected_output_tensor = tch::Tensor::
+            of_slice(&train_expected_output).
+            reshape(&[train_expected_output.len() as i64 / output_layer_size, output_layer_size]);
+
+        // input_tensor.print();
+        // expected_output_tensor.print();
+
+        let test_input_tensor = tch::Tensor::
+            of_slice(&test_input).
+            reshape(&[test_input.len() as i64 / input_layer_size, input_layer_size]);
+        let test_expected_output_tensor = tch::Tensor::
+            of_slice(&test_expected_output).
+            reshape(&[test_expected_output.len() as i64 / output_layer_size, output_layer_size]);
+
+        for epoch in 0..2600 {
+            // println!("AAAAAAA: {:?} => {:?}", input_tensor, expected_output_tensor);
+            let output_tensor = neural_net.forward(&input_tensor);
+            // let error = output_tensor - expected_output_tensor;
+            let loss_tensor = output_tensor.mse_loss(&expected_output_tensor, tch::Reduction::Mean);
+
+            optimizer.backward_step(&loss_tensor);
+
+            let test_output_tensor = neural_net.forward(&test_input_tensor);
+            let test_loss_tensor = test_output_tensor.mse_loss(&test_expected_output_tensor, tch::Reduction::Mean);
+
+            if epoch == 2599 {
+            // test_input_tensor.print();
+                let expected = (&test_expected_output_tensor * bid_price_range as f64) + min_ever_bid_price as f64;
+                let actual = (&test_output_tensor * bid_price_range as f64) + min_ever_bid_price as f64;
+                expected.print();
+                actual.print();
+            }
+            
+            println!(
+                "epoch: {:4} train loss: {:8.5} test loss: {:8.5}",
+                epoch,
+                f64::from(&loss_tensor),
+                f64::from(&test_loss_tensor),
+                // 100. * f64::from(&test_accuracy),
+            );
+        }
+
+        // Make predictions
+
+        Ok(())
+    }
+
+}
+
 fn main() -> anyhow::Result<()> {
-    let mut service = fxcm::service::FxcmTradingService::create("api-demo.fxcm.com", "4979200962b698e88aa1492f4e62f6e30e338a27")?;
+    // let mut service = fxcm::service::FxcmTradingService::create("api-demo.fxcm.com", "4979200962b698e88aa1492f4e62f6e30e338a27")?;
     let mut storage = file_storage::FileStorage::create()?;
 
-    let to_date = Utc::now();
-    let from_date = to_date.sub(Duration::days(6));
-    trading_lib::fetch_symbol_history(&mut service, &mut storage, "EUR/USD", trading_lib::HistoryTimeframe::Min1, &from_date, &to_date)
+    // let to_date = Utc::now();
+    // let from_date = to_date.sub(Duration::hours(3));
+    // trading_lib::fetch_symbol_history(&mut service, &mut storage, "EUR/USD", trading_lib::HistoryTimeframe::Min1, &from_date, &to_date)
+
+    let mut model = PyTorchModel{};
+    trading_lib::train_model(&mut model, &mut storage, "EUR_USD_Min1_202010051004_202010111004")?;
 
     // run_linear_regression();
     // run_neural_network();
-    // Ok(())
+    Ok(())
 }
