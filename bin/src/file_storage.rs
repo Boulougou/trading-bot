@@ -17,7 +17,7 @@ impl trading_lib::Storage for FileStorage {
     }
 
     fn load_symbol_history(&mut self, name: &str) -> anyhow::Result<Vec<trading_lib::HistoryStep>> {
-        let file = std::fs::File::open(format!("{}", name))?;
+        let file = std::fs::File::open(format!("{}.json", name))?;
         let history = ::serde_json::from_reader(&file)?;
         Ok(history)
     }
