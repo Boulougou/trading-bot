@@ -2,90 +2,85 @@ use trading_lib;
 use tch::nn::{Module, OptimizerConfig};
 use rand::{SeedableRng, Rng, seq::SliceRandom};
 
-pub struct PyTorchModel {}
+pub struct PyTorchModel {
+    input_window_size : u32,
+    prediction_window_size : u32
+}
+
+impl PyTorchModel {
+    pub fn new(input_window_size : u32, prediction_window_size : u32) -> PyTorchModel {
+        PyTorchModel{ input_window_size, prediction_window_size }
+    }
+
+    fn prepare_input_data(&self, history : &Vec<trading_lib::HistoryStep>,
+            min_ever_bid_price : f32, max_ever_bid_price : f32) -> (Vec<f32>, Vec<f32>, u32, u32) {
+        let normalize = |v : f32| (v - min_ever_bid_price) / (max_ever_bid_price - min_ever_bid_price);
+        let input_size = history.len() - self.prediction_window_size as usize - self.input_window_size as usize;
+        
+        let mut input = Vec::new();
+        let mut expected_output = Vec::new();
+        for i in 0..input_size {
+            let input_end = i + self.input_window_size as usize;
+            let input_steps = &history[i..input_end];
+            let future_steps = &history[input_end..input_end + self.prediction_window_size as usize];
+
+            for s in input_steps {
+                input.push(normalize(s.bid_candle.price_low));
+                input.push(normalize(s.bid_candle.price_high));
+                input.push(normalize(s.bid_candle.price_open));
+                input.push(normalize(s.bid_candle.price_close));
+            }
+
+            let mut min_bid_price = f32::INFINITY;
+            let mut max_bid_price = f32::NEG_INFINITY;
+            for s in future_steps {
+                min_bid_price = min_bid_price.min(s.bid_candle.price_low);
+                max_bid_price = max_bid_price.max(s.bid_candle.price_high);
+            }
+            expected_output.push(normalize(min_bid_price));
+            expected_output.push(normalize(max_bid_price));
+        }
+
+        let input_per_history_step : u32 = 4;
+        let output_per_history_step : u32 = 2;
+        (input, expected_output, input_per_history_step, output_per_history_step)
+
+    }
+
+    fn split_input<'a>(&self, input : &'a Vec<f32>, expected_output : &'a Vec<f32>, input_stride : u32,
+            output_stride : u32, split_point : f32) -> (&'a[f32], &'a[f32], &'a[f32], &'a[f32]) {
+        let input_stride = self.input_window_size * input_stride;
+        let train_input_size = (split_point * (input.len() / input_stride as usize) as f32) as usize * input_stride as usize;
+        let train_output_size = (split_point * (expected_output.len() / output_stride as usize) as f32) as usize * output_stride as usize;
+
+        (&input[..train_input_size], &expected_output[..train_output_size],
+         &input[train_input_size..], &expected_output[train_output_size..])
+    }
+
+    fn find_min_max_prices(history : &Vec<trading_lib::HistoryStep>) -> (f32, f32) {
+        let mut min_bid_price = f32::INFINITY;
+        let mut max_bid_price = f32::NEG_INFINITY;
+        for step in history {
+            min_bid_price = min_bid_price.min(step.bid_candle.price_low);
+            max_bid_price = max_bid_price.max(step.bid_candle.price_high);
+        }
+
+        (min_bid_price, max_bid_price)
+    }
+}
 
 impl trading_lib::TradingModel for PyTorchModel {
 
     fn train(&mut self, history : &Vec<trading_lib::HistoryStep>) -> anyhow::Result<()> {
-        let training_window_size : u32 = 30;
-        let input_per_history_step : u32 = 4;
-        let prediction_window_size : u32 = 20;
-        let output_per_history_step : u32 = 2;
-
-        let (min_ever_bid_price, max_ever_bid_price) = {
-            let mut min_bid_price = f32::INFINITY;
-            let mut max_bid_price = f32::NEG_INFINITY;
-            for step in history {
-                min_bid_price = min_bid_price.min(step.bid_candle.price_low);
-                max_bid_price = max_bid_price.max(step.bid_candle.price_high);
-            }
-
-            (min_bid_price, max_bid_price)
-        };
+        let (min_ever_bid_price, max_ever_bid_price) = PyTorchModel::find_min_max_prices(history);
         let bid_price_range = max_ever_bid_price - min_ever_bid_price;
 
-        let (train_input, train_expected_output, test_input, test_expected_output) = {
-            let input_size = history.len() - prediction_window_size as usize - training_window_size as usize;
-            let train_input_size = (input_size as f32 * 0.8) as usize;
+        let (input, expected_output, input_per_history_step, output_per_history_step) = self.prepare_input_data(
+            history, min_ever_bid_price, max_ever_bid_price);
+        let (train_input, train_expected_output, test_input, test_expected_output) = self.split_input(
+            &input, &expected_output, input_per_history_step, output_per_history_step, 0.8);
 
-            let (train_input, train_expected_output) = {
-                let mut input = Vec::new();
-                let mut expected_output = Vec::new();
-                for i in 0..train_input_size {
-                    let input_end = i + training_window_size as usize;
-                    let input_steps = &history[i..input_end];
-                    let future_steps = &history[input_end..input_end + prediction_window_size as usize];
-
-                    for s in input_steps {
-                        input.push((s.bid_candle.price_low - min_ever_bid_price) / bid_price_range);
-                        input.push((s.bid_candle.price_high - min_ever_bid_price) / bid_price_range);
-                        input.push((s.bid_candle.price_open - min_ever_bid_price) / bid_price_range);
-                        input.push((s.bid_candle.price_close - min_ever_bid_price) / bid_price_range);
-                    }
-
-                    let mut min_bid_price = f32::INFINITY;
-                    let mut max_bid_price = f32::NEG_INFINITY;
-                    for s in future_steps {
-                        min_bid_price = min_bid_price.min(s.bid_candle.price_low);
-                        max_bid_price = max_bid_price.max(s.bid_candle.price_high);
-                    }
-                    expected_output.push((min_bid_price - min_ever_bid_price) / bid_price_range);
-                    expected_output.push((max_bid_price - min_ever_bid_price) / bid_price_range);
-                }
-                (input, expected_output)
-            };
-
-            let (test_input, test_expected_output) = {
-                let mut input = Vec::new();
-                let mut expected_output = Vec::new();
-                for i in train_input_size..input_size {
-                    let input_end = i + training_window_size as usize;
-                    let input_steps = &history[i..input_end];
-                    let future_steps = &history[input_end..input_end + prediction_window_size as usize];
-
-                    for s in input_steps {
-                        input.push((s.bid_candle.price_low - min_ever_bid_price) / bid_price_range);
-                        input.push((s.bid_candle.price_high - min_ever_bid_price) / bid_price_range);
-                        input.push((s.bid_candle.price_open - min_ever_bid_price) / bid_price_range);
-                        input.push((s.bid_candle.price_close - min_ever_bid_price) / bid_price_range);
-                    }
-
-                    let mut min_bid_price = f32::INFINITY;
-                    let mut max_bid_price = f32::NEG_INFINITY;
-                    for s in future_steps {
-                        min_bid_price = min_bid_price.min(s.bid_candle.price_low);
-                        max_bid_price = max_bid_price.max(s.bid_candle.price_high);
-                    }
-                    expected_output.push((min_bid_price - min_ever_bid_price) / bid_price_range);
-                    expected_output.push((max_bid_price - min_ever_bid_price) / bid_price_range);
-                }
-                (input, expected_output)
-            };
-
-            (train_input, train_expected_output, test_input, test_expected_output)
-        };
-
-        let input_layer_size : i64 = input_per_history_step as i64 * training_window_size as i64;
+        let input_layer_size : i64 = input_per_history_step as i64 * self.input_window_size as i64;
         let hidden_layer_size : i64 = input_layer_size / 2;
         let output_layer_size : i64 = output_per_history_step as i64;
 
