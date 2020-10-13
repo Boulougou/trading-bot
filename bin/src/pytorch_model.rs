@@ -4,17 +4,18 @@ use rand::{SeedableRng, Rng, seq::SliceRandom};
 
 pub struct PyTorchModel {
     input_window_size : u32,
-    prediction_window_size : u32
+    prediction_window_size : u32,
+    learning_rate : f32
 }
 
 impl PyTorchModel {
-    pub fn new(input_window_size : u32, prediction_window_size : u32) -> PyTorchModel {
-        PyTorchModel{ input_window_size, prediction_window_size }
+    pub fn new(input_window_size : u32, prediction_window_size : u32, learning_rate : f32) -> PyTorchModel {
+        PyTorchModel{ input_window_size, prediction_window_size, learning_rate }
     }
 
     fn prepare_input_data(&self, history : &Vec<trading_lib::HistoryStep>,
             min_ever_bid_price : f32, max_ever_bid_price : f32) -> (Vec<f32>, Vec<f32>, u32, u32) {
-        let normalize = |v : f32| (v - min_ever_bid_price) / (max_ever_bid_price - min_ever_bid_price);
+        let normalize = |v : f32| (v - min_ever_bid_price) / (max_ever_bid_price - min_ever_bid_price) - 0.5;
         let input_size = history.len() - self.prediction_window_size as usize - self.input_window_size as usize;
         
         let mut input = Vec::new();
@@ -29,6 +30,10 @@ impl PyTorchModel {
                 input.push(normalize(s.bid_candle.price_high));
                 input.push(normalize(s.bid_candle.price_open));
                 input.push(normalize(s.bid_candle.price_close));
+                input.push(normalize(s.ask_candle.price_low));
+                input.push(normalize(s.ask_candle.price_high));
+                input.push(normalize(s.ask_candle.price_open));
+                input.push(normalize(s.ask_candle.price_close));
             }
 
             let mut min_bid_price = f32::INFINITY;
@@ -41,7 +46,7 @@ impl PyTorchModel {
             expected_output.push(normalize(max_bid_price));
         }
 
-        let input_per_history_step : u32 = 4;
+        let input_per_history_step : u32 = 8;
         let output_per_history_step : u32 = 2;
         (input, expected_output, input_per_history_step, output_per_history_step)
 
@@ -81,16 +86,18 @@ impl trading_lib::TradingModel for PyTorchModel {
             &input, &expected_output, input_per_history_step, output_per_history_step, 0.8);
 
         let input_layer_size : i64 = input_per_history_step as i64 * self.input_window_size as i64;
-        let hidden_layer_size : i64 = input_layer_size / 2;
+        // let hidden_layer_size : i64 = input_layer_size / 2;
         let output_layer_size : i64 = output_per_history_step as i64;
 
         let var_store = tch::nn::VarStore::new(tch::Device::Cpu);
         let neural_net = tch::nn::seq()
-            .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
-            // .add_fn(|xs| xs.sigmoid())
-            .add(tch::nn::linear(var_store.root(), hidden_layer_size, output_layer_size, Default::default()));
+            .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, output_layer_size, Default::default()));
+        // let neural_net = tch::nn::seq()
+            // .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
+            // .add_fn(|xs| xs.relu())
+            // .add(tch::nn::linear(var_store.root(), hidden_layer_size, output_layer_size, Default::default()));
 
-        let mut optimizer = tch::nn::Adam::default().build(&var_store, 1e-3).unwrap();
+        let mut optimizer = tch::nn::Adam::default().build(&var_store, self.learning_rate as f64).unwrap();
 
         let input_tensor = tch::Tensor::
             of_slice(&train_input).
@@ -122,8 +129,8 @@ impl trading_lib::TradingModel for PyTorchModel {
 
             if epoch == 2599 {
             // test_input_tensor.print();
-                let expected = (&test_expected_output_tensor * bid_price_range as f64) + min_ever_bid_price as f64;
-                let actual = (&test_output_tensor * bid_price_range as f64) + min_ever_bid_price as f64;
+                let expected = ((&test_expected_output_tensor + 0.5) * bid_price_range as f64) + min_ever_bid_price as f64;
+                let actual = ((&test_output_tensor + 0.5) * bid_price_range as f64) + min_ever_bid_price as f64;
                 expected.print();
                 actual.print();
             }

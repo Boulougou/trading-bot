@@ -44,6 +44,9 @@ struct Opt {
 
     #[structopt(long, required_if("mode", "train"))]
     pred_window : Option<u32>,
+
+    #[structopt(long, default_value = "1e-3", required_if("mode", "train"))]
+    learning_rate : f32,
 }
 
 fn parse_date(date_str : &str) -> anyhow::Result<DateTime<Utc>> {
@@ -72,7 +75,7 @@ fn main() -> anyhow::Result<()> {
         },
         Mode::train => {
             let mut storage = file_storage::FileStorage::create()?;
-            let mut model = pytorch_model::PyTorchModel::new(opt.input_window.unwrap(), opt.pred_window.unwrap());
+            let mut model = pytorch_model::PyTorchModel::new(opt.input_window.unwrap(), opt.pred_window.unwrap(), opt.learning_rate);
             trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap())?;
         }
     }
