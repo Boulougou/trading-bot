@@ -115,14 +115,21 @@ impl FxcmTradingService {
         utils::http_post_json(authorization_token, api_host, "trading/subscribe/", &params).map(|_| ())
     }
 
-    fn open_trade(&mut self, symbol : &str, amount_in_lots : u32, is_buy : bool) -> anyhow::Result<trading_lib::TradeId> {
-        let open_trade_params = vec!(
+    fn open_trade(&mut self, symbol : &str, amount_in_lots : u32, is_buy : bool, options : &trading_lib::TradeOptions) -> anyhow::Result<trading_lib::TradeId> {
+        let mut open_trade_params = vec!(
             (String::from("account_id"), self.account_id.clone()),
             (String::from("is_buy"), is_buy.to_string()),
             (String::from("amount"), amount_in_lots.to_string()),
             (String::from("time_in_force"), String::from("GTC")),
             (String::from("order_type"), String::from("AtMarket")),
             (String::from("symbol"), String::from(symbol)));
+        if options.limit.is_some() {
+            open_trade_params.push((String::from("limit"), format!("{}", options.limit.unwrap())));
+        }
+        if options.stop.is_some() {
+            open_trade_params.push((String::from("stop"), format!("{}", options.stop.unwrap())));
+        }
+
         let http_resp_json : Value = utils::http_post_json(&self.authorization_token, &self.host, "trading/open_trade/", &open_trade_params)?;
 
         println!("Open trade json: {}", http_resp_json);
@@ -209,12 +216,12 @@ impl trading_lib::TradingService for FxcmTradingService {
         Ok(10000)
      }
 
-    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<trading_lib::TradeId> {
-        self.open_trade(&symbol, amount_in_lots, true)
+    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &trading_lib::TradeOptions) -> anyhow::Result<trading_lib::TradeId> {
+        self.open_trade(&symbol, amount_in_lots, true, options)
     }
 
-    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<trading_lib::TradeId> {
-        self.open_trade(&symbol, amount_in_lots, false)
+    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &trading_lib::TradeOptions) -> anyhow::Result<trading_lib::TradeId> {
+        self.open_trade(&symbol, amount_in_lots, false, options)
     }
 
     fn close_trade(&mut self, trade_id : &trading_lib::TradeId) -> anyhow::Result<()> {

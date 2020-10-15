@@ -13,7 +13,8 @@ arg_enum! {
     enum Mode {
         fetch,
         train,
-        eval
+        eval,
+        trade
     }
 }
 
@@ -25,8 +26,11 @@ struct Opt {
     #[structopt(possible_values = &Mode::variants())]
     mode : Mode,
 
-    #[structopt(short, long, required_if("mode", "fetch"))]
+    #[structopt(short, long, required_if("mode", "fetch"), required_if("mode", "trade"))]
     symbol : Option<String>,
+
+    #[structopt(short, long, required_if("mode", "trade"))]
+    ammount : Option<u32>,
 
     #[structopt(short, long, required_if("mode", "fetch"))]
     timeframe : Option<trading_lib::HistoryTimeframe>,
@@ -40,7 +44,7 @@ struct Opt {
     #[structopt(short, long, required_if("mode", "train"), required_if("mode", "eval"))]
     input : Option<String>,
 
-    #[structopt(short, long, required_if("mode", "train"), required_if("mode", "eval"))]
+    #[structopt(short, long, required_if("mode", "train"), required_if("mode", "eval"), required_if("mode", "trade"))]
     model : Option<String>,
 
     #[structopt(long, required_if("mode", "train"))]
@@ -51,6 +55,9 @@ struct Opt {
 
     #[structopt(long, default_value = "1e-3", required_if("mode", "train"))]
     learning_rate : f32,
+
+    #[structopt(long, default_value = "3000", required_if("mode", "train"))]
+    learning_iterations : u32,
 }
 
 fn parse_date(date_str : &str) -> anyhow::Result<DateTime<Utc>> {
@@ -81,13 +88,20 @@ fn main() -> anyhow::Result<()> {
             let mut storage = file_storage::FileStorage::create()?;
             let mut model = pytorch_model::PyTorchModel::new();
             trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap(),
-                opt.input_window.unwrap(), opt.pred_window.unwrap(), &opt.learning_rate, &opt.model.unwrap())?;
+                opt.input_window.unwrap(), opt.pred_window.unwrap(),
+                &(opt.learning_rate, opt.learning_iterations), &opt.model.unwrap())?;
         },
         Mode::eval => {
             let mut storage = file_storage::FileStorage::create()?;
             let mut model = pytorch_model::PyTorchModel::new();
             let predictions = trading_lib::evaluate_model(&mut model, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
             println!("Predictions: {:?}", predictions);
+        },
+        Mode::trade => {
+            let mut service = fxcm::service::FxcmTradingService::create(fxcm_host, fxcm_token)?;
+            let mut model = pytorch_model::PyTorchModel::new();
+            let (trade_id, options) = trading_lib::open_trade(&mut service, &mut model, &opt.symbol.unwrap(), opt.ammount.unwrap(), &opt.model.unwrap())?;
+            println!("Opened trade {:?}, stop: {:?}, limit: {:?}", trade_id, options.stop, options.limit);
         }
     }
 

@@ -1,3 +1,4 @@
+use std::ops::Sub;
 use chrono::{DateTime, Utc, Duration};
 use std::ops::Add;
 use serde::{Deserialize, Serialize};
@@ -63,14 +64,21 @@ impl HistoryTimeframe {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct TradeOptions {
+    pub limit : Option<f32>,
+    pub stop : Option<f32>
+}
+
 #[cfg_attr(test, automock)]
 pub trait TradingService {
     fn get_trade_symbols(&mut self) -> anyhow::Result<Vec<String>>;
     fn get_symbol_history(&mut self, symbol : &str, timeframe : HistoryTimeframe,
         since_date : &DateTime<Utc>, to_date : &DateTime<Utc>) -> anyhow::Result<Vec<HistoryStep>>;
     fn max_history_steps_per_call(&mut self) -> anyhow::Result<u32>;
-    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<TradeId>;
-    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32) -> anyhow::Result<TradeId>;
+
+    fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &TradeOptions) -> anyhow::Result<TradeId>;
+    fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &TradeOptions) -> anyhow::Result<TradeId>;
     fn close_trade(&mut self, trade_id : &TradeId) -> anyhow::Result<()>;
 }
 
@@ -168,6 +176,30 @@ pub fn evaluate_model(model : &mut impl TradingModel,
     // TODO Now we just return predictions without evaluating the model
     // either rename the existing method or change it to also do the evaluation based on the expected output
     Ok(results)
+}
+
+pub fn open_trade(service : &mut impl TradingService,
+                  model : &mut impl TradingModel,
+                  symbol : &str,
+                  ammount : u32,
+                  model_name : &str) -> anyhow::Result<(TradeId, TradeOptions)> {
+    model.load(model_name)?;
+
+    let input_size = model.get_input_window()? as usize;
+    let request_to_date = Utc::now();
+    let history_buffer = 5;
+    let request_from_date = request_to_date.sub(Duration::minutes(history_buffer + input_size as i64));
+    let history = service.get_symbol_history(symbol, HistoryTimeframe::Min1, &request_from_date, &request_to_date)?;
+
+    if history.len() < input_size {
+        return Err(anyhow!("History size must be at least {} (was {})", input_size, history.len()));
+    }
+
+    let input = Vec::from(&history[history.len() - input_size..]);
+    let (min_bid_price, max_bid_price) = model.predict(&input)?;
+    let trade_options = TradeOptions { stop : /* Some(min_bid_price) */None, limit : Some(max_bid_price) };
+    let trade_id = service.open_buy_trade(symbol, ammount, &trade_options)?;
+    Ok((trade_id, trade_options))
 }
 
 /*
