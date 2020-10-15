@@ -1519,6 +1519,7 @@ dependencies = [
  "native-tls",
  "rand",
  "reqwest",
+ "serde",
  "serde_json",
  "structopt",
  "tch",

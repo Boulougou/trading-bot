@@ -12,7 +12,8 @@ arg_enum! {
     #[allow(non_camel_case_types)]
     enum Mode {
         fetch,
-        train
+        train,
+        eval
     }
 }
 
@@ -36,8 +37,11 @@ struct Opt {
     #[structopt(long)]
     to_date : Option<String>,
 
-    #[structopt(short, long, required_if("mode", "train"))]
+    #[structopt(short, long, required_if("mode", "train"), required_if("mode", "eval"))]
     input : Option<String>,
+
+    #[structopt(short, long, required_if("mode", "train"), required_if("mode", "eval"))]
+    model : Option<String>,
 
     #[structopt(long, required_if("mode", "train"))]
     input_window : Option<u32>,
@@ -75,8 +79,15 @@ fn main() -> anyhow::Result<()> {
         },
         Mode::train => {
             let mut storage = file_storage::FileStorage::create()?;
-            let mut model = pytorch_model::PyTorchModel::new(opt.input_window.unwrap(), opt.pred_window.unwrap(), opt.learning_rate);
-            trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap())?;
+            let mut model = pytorch_model::PyTorchModel::new();
+            trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap(),
+                opt.input_window.unwrap(), opt.pred_window.unwrap(), &opt.learning_rate, &opt.model.unwrap())?;
+        },
+        Mode::eval => {
+            let mut storage = file_storage::FileStorage::create()?;
+            let mut model = pytorch_model::PyTorchModel::new();
+            let predictions = trading_lib::evaluate_model(&mut model, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
+            println!("Predictions: {:?}", predictions);
         }
     }
 

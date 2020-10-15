@@ -2,9 +2,10 @@ use chrono::{DateTime, Utc, Duration};
 use std::ops::Add;
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
+use anyhow::anyhow;
 
 #[cfg(test)]
-use mockall::{automock, predicate::*};
+use mockall::{automock, Sequence, predicate::*};
 #[cfg(test)]
 use chrono::{TimeZone};
 
@@ -25,7 +26,7 @@ pub struct HistoryStep {
     pub ask_candle : Candlestick
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Clone, Copy, EnumString)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy, EnumString, Deserialize, Serialize)]
 pub enum HistoryTimeframe {
     Min1,
     Min5,
@@ -73,9 +74,17 @@ pub trait TradingService {
     fn close_trade(&mut self, trade_id : &TradeId) -> anyhow::Result<()>;
 }
 
-#[cfg_attr(test, automock)]
+#[cfg_attr(test, automock(type TrainingParams = f32;))]
 pub trait TradingModel {
-    fn train(&mut self, input : &Vec<HistoryStep>) -> anyhow::Result<()>;
+    type TrainingParams;
+    
+    fn train(&mut self, input : &Vec<HistoryStep>, input_window : u32, prediction_window : u32, extra_params : &Self::TrainingParams) -> anyhow::Result<()>;
+    fn get_input_window(&self) -> anyhow::Result<u32>;
+    
+    fn predict(&mut self, input : &Vec<HistoryStep>) -> anyhow::Result<(f32, f32)>;
+
+    fn save(&mut self, name : &str) -> anyhow::Result<()>;
+    fn load(&mut self, name : &str) -> anyhow::Result<()>;
 }
 
 #[cfg_attr(test, automock)]
@@ -122,12 +131,43 @@ pub fn fetch_symbol_history(service : &mut impl TradingService,
     Ok(())
 }
 
-pub fn train_model(model : &mut impl TradingModel,
+pub fn train_model<T : TradingModel>(model : &mut T,
                    storage : &mut impl Storage,
-                   input_entry : &str) -> anyhow::Result<()> {
+                   input_name : &str,
+                   input_window : u32,
+                   prediction_window : u32,
+                   extra_training_params : &T::TrainingParams,
+                   output_name : &str) -> anyhow::Result<()> {
 
-    let history = storage.load_symbol_history(input_entry)?;
-    model.train(&history)
+    let history = storage.load_symbol_history(input_name)?;
+    model.train(&history, input_window, prediction_window, extra_training_params)?;
+    model.save(output_name)
+}
+
+pub fn evaluate_model(model : &mut impl TradingModel,
+                      storage : &mut impl Storage,
+                      model_name : &str,
+                      input_name : &str) -> anyhow::Result<Vec<(f32, f32)>> {
+    model.load(model_name)?;
+
+    let input_size = model.get_input_window()? as usize;
+    let history = storage.load_symbol_history(input_name)?;
+
+    let num_predictions = 1 + history.len() as i64 - input_size as i64;
+    if num_predictions <= 0 {
+        return Err(anyhow!("History size must be at least {}", input_size));
+    }
+
+    let mut results = Vec::new();
+    for i in 0..num_predictions as usize {
+        let current_input = Vec::from(&history[i..i + input_size]);
+        let prediction = model.predict(&current_input)?;
+        results.push(prediction);
+    }
+
+    // TODO Now we just return predictions without evaluating the model
+    // either rename the existing method or change it to also do the evaluation based on the expected output
+    Ok(results)
 }
 
 /*
@@ -213,17 +253,17 @@ mod tests {
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Min1), eq(since_date), eq(since_date.add(Duration::minutes(max_history_steps_per_call as i64))))
             .times(1)
-            .return_once(move |_, _, _, _| Ok(build_history(max_history_steps_per_call)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(0, max_history_steps_per_call)));
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Min1), eq(since_date.add(Duration::minutes(max_history_steps_per_call as i64))),
                 eq(since_date.add(Duration::minutes(2 * max_history_steps_per_call as i64))))
             .times(1)
-            .return_once(move |_, _, _, _| Ok(build_history(max_history_steps_per_call)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(max_history_steps_per_call, max_history_steps_per_call)));
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Min1), eq(since_date.add(Duration::minutes(2 * max_history_steps_per_call as i64))),
                 eq(to_date))
             .times(1)
-            .return_once(|_, _, _, _| Ok(build_history(1)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(2 * max_history_steps_per_call, 1)));
 
         storage.expect_save_symbol_history()
             .with(eq("EUR_CAN_Min1_201901012130_201901020051"), eq(build_history(2 * max_history_steps_per_call + 1)))
@@ -249,12 +289,12 @@ mod tests {
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Min5), eq(since_date), eq(since_date.add(Duration::minutes(5 * max_history_steps_per_call as i64))))
             .times(1)
-            .return_once(move |_, _, _, _| Ok(build_history(max_history_steps_per_call)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(0, max_history_steps_per_call)));
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Min5), eq(since_date.add(Duration::minutes(5 * max_history_steps_per_call as i64))),
                 eq(to_date))
             .times(1)
-            .return_once(|_, _, _, _| Ok(build_history(1)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(max_history_steps_per_call, 1)));
 
         storage.expect_save_symbol_history()
             .with(eq("EUR_CAN_Min5_201901012130_201901012225"), eq(build_history(max_history_steps_per_call + 1)))
@@ -280,12 +320,12 @@ mod tests {
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Hour1), eq(since_date), eq(since_date.add(Duration::minutes(60 * max_history_steps_per_call as i64))))
             .times(1)
-            .return_once(move |_, _, _, _| Ok(build_history(max_history_steps_per_call)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(0, max_history_steps_per_call)));
         service.expect_get_symbol_history()
             .with(eq("EUR/CAN"), eq(HistoryTimeframe::Hour1), eq(since_date.add(Duration::minutes(60 * max_history_steps_per_call as i64))),
                 eq(to_date))
             .times(1)
-            .return_once(|_, _, _, _| Ok(build_history(1)));
+            .return_once(move |_, _, _, _| Ok(build_history_offset(max_history_steps_per_call, 1)));
 
         storage.expect_save_symbol_history()
             .with(eq("EUR_CAN_Hour1_201901012130_201901020830"), eq(build_history(max_history_steps_per_call + 1)))
@@ -297,7 +337,186 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn evaluate_model_with_history_smaller_than_input_size() {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .times(1)
+            .with(eq("modelA"))
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|| Ok(10));
+        storage.expect_load_symbol_history()
+            .with(eq("EUR_CAN_Hour1"))
+            .times(1)
+            .return_once(|_| Ok(build_history(9)));
+
+        let result = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn evaluate_model_with_history_equal_to_input_size() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .times(1)
+            .with(eq("modelA"))
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|| Ok(10));
+
+        storage.expect_load_symbol_history()
+            .with(eq("EUR_CAN_Hour1"))
+            .times(1)
+            .return_once(|_| Ok(build_history(10)));
+
+        model.expect_predict()
+            .with(eq(build_history(10)))
+            .times(1)
+            .return_once(|_| Ok((0.2, 0.5)));
+
+        let result = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+
+        assert_eq!(result, vec!((0.2, 0.5)));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_model_with_history_larger_from_input_size() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .times(1)
+            .with(eq("modelA"))
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|| Ok(10));
+
+        storage.expect_load_symbol_history()
+            .with(eq("EUR_CAN_Hour1"))
+            .times(1)
+            .return_once(|_| Ok(build_history(12)));
+
+        model.expect_predict()
+            .with(eq(build_history_offset(0, 10)))
+            .times(1)
+            .return_once(|_| Ok((0.2, 0.5)));
+        model.expect_predict()
+            .with(eq(build_history_offset(1, 10)))
+            .times(1)
+            .return_once(|_| Ok((0.1, 0.6)));
+        model.expect_predict()
+            .with(eq(build_history_offset(2, 10)))
+            .times(1)
+            .return_once(|_| Ok((-0.2, -0.5)));
+
+        let result = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+
+        assert_eq!(result, vec!((0.2, 0.5), (0.1, 0.6), (-0.2, -0.5)));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_model_failing_to_load_model() {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        model.expect_load()
+            .times(1)
+            .with(eq("modelB"))
+            .return_once(|_| Err(anyhow!("Failed")));
+        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn evaluate_model_failing_to_get_input_window() {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        model.expect_load()
+            .times(1)
+            .with(eq("modelB"))
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .return_once(|| Err(anyhow!("Failed")));
+        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn evaluate_model_failing_to_load_input() {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        model.expect_load()
+            .times(1)
+            .with(eq("modelB"))
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .return_once(|| Ok(10));
+        storage.expect_load_symbol_history()
+            .with(eq("EUR_CAN_Hour1"))
+            .times(1)
+            .return_once(|_| Err(anyhow!("Failed")));
+        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn evaluate_model_failing_run_prediction() {
+        let mut model = MockTradingModel::new();
+        let mut storage = MockStorage::new();
+
+        model.expect_load()
+            .times(1)
+            .with(eq("modelB"))
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .return_once(|| Ok(10));
+        storage.expect_load_symbol_history()
+            .with(eq("EUR_CAN_Hour1"))
+            .times(1)
+            .return_once(|_| Ok(build_history(10)));
+
+        model.expect_predict()
+            .with(eq(build_history(10)))
+            .times(1)
+            .return_once(|_| Err(anyhow!("Failed")));
+        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+
+        assert!(result.is_err());
+    }
+
     fn build_history(num_steps : u32) -> Vec<HistoryStep> {
+        build_history_offset(0, num_steps)
+    }
+
+    fn build_history_offset(offset : u32, num_steps : u32) -> Vec<HistoryStep> {
         let step = HistoryStep {
             timestamp : 32432,
             bid_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 },
@@ -305,8 +524,9 @@ mod tests {
         };
 
         let mut history = Vec::new();
-        for _ in 0..num_steps {
-            history.push(step.clone());
+        for i in 0..num_steps {
+            let current_step = HistoryStep { timestamp : i + offset, ..step.clone() };
+            history.push(current_step);
         }
 
         history
