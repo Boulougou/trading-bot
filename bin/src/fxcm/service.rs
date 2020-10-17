@@ -214,7 +214,11 @@ impl trading_lib::TradingService for FxcmTradingService {
     
     fn max_history_steps_per_call(&mut self) -> anyhow::Result<u32> {
         Ok(10000)
-     }
+    }
+
+    fn get_market_update(&mut self, _symbol : &str) -> anyhow::Result<(f32, f32)> {
+        todo!()
+    }
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &trading_lib::TradeOptions) -> anyhow::Result<trading_lib::TradeId> {
         self.open_trade(&symbol, amount_in_lots, true, options)

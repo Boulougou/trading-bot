@@ -64,7 +64,7 @@ impl HistoryTimeframe {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct TradeOptions {
     pub limit : Option<f32>,
     pub stop : Option<f32>
@@ -77,6 +77,8 @@ pub trait TradingService {
         since_date : &DateTime<Utc>, to_date : &DateTime<Utc>) -> anyhow::Result<Vec<HistoryStep>>;
     fn max_history_steps_per_call(&mut self) -> anyhow::Result<u32>;
 
+    fn get_market_update(&mut self, symbol : &str) -> anyhow::Result<(f32, f32)>;
+
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &TradeOptions) -> anyhow::Result<TradeId>;
     fn open_sell_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &TradeOptions) -> anyhow::Result<TradeId>;
     fn close_trade(&mut self, trade_id : &TradeId) -> anyhow::Result<()>;
@@ -87,9 +89,9 @@ pub trait TradingModel {
     type TrainingParams;
     
     fn train(&mut self, input : &Vec<HistoryStep>, input_window : u32, prediction_window : u32, extra_params : &Self::TrainingParams) -> anyhow::Result<()>;
-    fn get_input_window(&self) -> anyhow::Result<u32>;
-    
     fn predict(&mut self, input : &Vec<HistoryStep>) -> anyhow::Result<(f32, f32)>;
+    
+    fn get_input_window(&self) -> anyhow::Result<u32>;
 
     fn save(&mut self, name : &str) -> anyhow::Result<()>;
     fn load(&mut self, name : &str) -> anyhow::Result<()>;
@@ -182,14 +184,27 @@ pub fn open_trade(service : &mut impl TradingService,
                   model : &mut impl TradingModel,
                   symbol : &str,
                   ammount : u32,
+                  timeframe : HistoryTimeframe,
+                  current_time : &DateTime<Utc>,
+                  model_name : &str) -> anyhow::Result<(TradeId, TradeOptions)> {
+    open_trade_with_profit(service, model, symbol, ammount, 0.0, timeframe, current_time, model_name)
+}
+
+pub fn open_trade_with_profit(service : &mut impl TradingService,
+                  model : &mut impl TradingModel,
+                  symbol : &str,
+                  ammount : u32,
+                  min_percent_profit : f32,
+                  timeframe : HistoryTimeframe,
+                  current_time : &DateTime<Utc>,
                   model_name : &str) -> anyhow::Result<(TradeId, TradeOptions)> {
     model.load(model_name)?;
 
     let input_size = model.get_input_window()? as usize;
-    let request_to_date = Utc::now();
+    let request_to_date = current_time;
     let history_buffer = 5;
     let request_from_date = request_to_date.sub(Duration::minutes(history_buffer + input_size as i64));
-    let history = service.get_symbol_history(symbol, HistoryTimeframe::Min1, &request_from_date, &request_to_date)?;
+    let history = service.get_symbol_history(symbol, timeframe, &request_from_date, &request_to_date)?;
 
     if history.len() < input_size {
         return Err(anyhow!("History size must be at least {} (was {})", input_size, history.len()));
@@ -197,9 +212,21 @@ pub fn open_trade(service : &mut impl TradingService,
 
     let input = Vec::from(&history[history.len() - input_size..]);
     let (min_bid_price, max_bid_price) = model.predict(&input)?;
-    let trade_options = TradeOptions { stop : /* Some(min_bid_price) */None, limit : Some(max_bid_price) };
-    let trade_id = service.open_buy_trade(symbol, ammount, &trade_options)?;
-    Ok((trade_id, trade_options))
+
+    let (current_bid_price, current_ask_price) = service.get_market_update(symbol)?;
+    let cost = current_ask_price - current_bid_price;
+    let possible_income = max_bid_price - current_bid_price;
+    let possible_profit = possible_income - cost;
+
+    if possible_profit / cost > min_percent_profit {
+        let trade_options = TradeOptions { stop : None, limit : Some(max_bid_price) };
+        let trade_id = service.open_buy_trade(symbol, ammount, &trade_options)?;
+        Ok((trade_id, trade_options))
+    }
+    else {
+        Err(anyhow!("Profit not possible: Cost({}) > Profit({}), (Bid({}), Ask({})), (MinBid({}), MaxBid({}))",
+            current_bid_price, current_ask_price, min_bid_price, max_bid_price, cost, possible_profit))
+    }
 }
 
 /*
@@ -540,6 +567,174 @@ mod tests {
             .times(1)
             .return_once(|_| Err(anyhow!("Failed")));
         let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_trade_when_prediction_range_covers_current_spread() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut service = MockTradingService::new();
+
+        let input_window = 10;
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .with(eq("trained_model"))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move || Ok(input_window));
+
+        let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
+        let since_date = current_date.sub(Duration::minutes(input_window as i64 + 5));
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Min1), eq(since_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(build_history(input_window + 6)));
+
+        model.expect_predict()
+            .with(eq(build_history_offset(6, input_window)))
+            .times(1)
+            .return_once(|_| Ok((1.0, 1.9)));
+
+        service.expect_get_market_update()
+            .with(eq("EUR/USD"))
+            .times(1)
+            .return_once(|_| Ok((1.4, 1.6)));
+        service.expect_open_buy_trade()
+            .with(eq("EUR/USD"), eq(12), eq(TradeOptions { stop : None, limit : Some(1.9) }))
+            .times(1)
+            .return_once(|_, _, _| Ok(String::from("trade#1138")));
+        let (trade_id, trade_options) = open_trade(&mut service, &mut model, "EUR/USD", 12, HistoryTimeframe::Min1, &current_date, "trained_model")?;
+
+        assert_eq!(trade_id, "trade#1138");
+        assert_eq!(trade_options, TradeOptions { stop : None, limit : Some(1.9) });
+        Ok(())
+    }
+
+    #[test]
+    fn do_not_open_trade_when_prediction_does_not_cover_current_spread() {
+        let mut model = MockTradingModel::new();
+        let mut service = MockTradingService::new();
+
+        let input_window = 10;
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .with(eq("trained_model"))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move || Ok(input_window));
+
+        let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
+        let since_date = current_date.sub(Duration::minutes(input_window as i64 + 5));
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Min1), eq(since_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(build_history(input_window + 6)));
+
+        model.expect_predict()
+            .with(eq(build_history_offset(6, input_window)))
+            .times(1)
+            .return_once(|_| Ok((1.0, 1.7)));
+
+        service.expect_get_market_update()
+            .with(eq("EUR/USD"))
+            .times(1)
+            .return_once(|_| Ok((1.6, 1.8)));
+        service.expect_open_buy_trade().never();
+        let result = open_trade(&mut service, &mut model, "EUR/USD", 12, HistoryTimeframe::Min1, &current_date, "trained_model");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_trade_when_prediction_range_covers_desired_profit() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut service = MockTradingService::new();
+
+        let input_window = 10;
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .with(eq("trained_model"))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move || Ok(input_window));
+
+        let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
+        let since_date = current_date.sub(Duration::minutes(input_window as i64 + 5));
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Min1), eq(since_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(build_history(input_window + 6)));
+
+        model.expect_predict()
+            .with(eq(build_history_offset(6, input_window)))
+            .times(1)
+            .return_once(|_| Ok((1.0, 2.0)));
+
+        service.expect_get_market_update()
+            .with(eq("EUR/USD"))
+            .times(1)
+            .return_once(|_| Ok((1.4, 1.6)));
+        service.expect_open_buy_trade()
+            .with(eq("EUR/USD"), eq(12), eq(TradeOptions { stop : None, limit : Some(2.0) }))
+            .times(1)
+            .return_once(|_, _, _| Ok(String::from("trade#1138")));
+        let (trade_id, trade_options) = open_trade_with_profit(&mut service, &mut model,
+            "EUR/USD", 12, 0.25, HistoryTimeframe::Min1, &current_date, "trained_model")?;
+
+        assert_eq!(trade_id, "trade#1138");
+        assert_eq!(trade_options, TradeOptions { stop : None, limit : Some(2.0) });
+        Ok(())
+    }
+
+    #[test]
+    fn do_not_open_trade_when_prediction_range_does_not_cover_desired_profit() {
+        let mut model = MockTradingModel::new();
+        let mut service = MockTradingService::new();
+
+        let input_window = 10;
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .with(eq("trained_model"))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move || Ok(input_window));
+
+        let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
+        let since_date = current_date.sub(Duration::minutes(input_window as i64 + 5));
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Min1), eq(since_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(build_history(input_window + 6)));
+
+        model.expect_predict()
+            .with(eq(build_history_offset(6, input_window)))
+            .times(1)
+            .return_once(|_| Ok((1.0, 2.0)));
+
+        service.expect_get_market_update()
+            .with(eq("EUR/USD"))
+            .times(1)
+            .return_once(|_| Ok((1.4, 1.6)));
+        service.expect_open_buy_trade().never();
+        let result = open_trade_with_profit(&mut service, &mut model,
+            "EUR/USD", 12, 2.01, HistoryTimeframe::Min1, &current_date, "trained_model");
 
         assert!(result.is_err());
     }

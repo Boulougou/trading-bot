@@ -173,10 +173,6 @@ impl trading_lib::TradingModel for PyTorchModel {
         Ok(())
     }
 
-    fn get_input_window(&self) -> anyhow::Result<u32> {
-        self.training_artifacts.as_ref().map(|a| a.metadata.input_window).ok_or(anyhow!("Model has not been trained yet"))
-    }
-
     fn predict(&mut self, history : &Vec<trading_lib::HistoryStep>) -> anyhow::Result<(f32, f32)> {
         let training_artifacts = self.training_artifacts.as_ref().ok_or(anyhow!("Model has not been trained yet"))?;
         let training_metadata = &training_artifacts.metadata;
@@ -200,6 +196,10 @@ impl trading_lib::TradingModel for PyTorchModel {
         let output_values : Vec<f64> = From::from(output_tensor);
         let output_values = output_values.iter().map(denormalize).collect::<Vec<_>>();
         Ok((output_values[0] as f32, output_values[1] as f32))
+    }
+
+    fn get_input_window(&self) -> anyhow::Result<u32> {
+        self.training_artifacts.as_ref().map(|a| a.metadata.input_window).ok_or(anyhow!("Model has not been trained yet"))
     }
 
     fn save(&mut self, output_name : &str) -> anyhow::Result<()> {
