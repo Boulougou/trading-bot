@@ -6,6 +6,17 @@ use anyhow::{anyhow, Context};
 use chrono::{DateTime, Utc};
 use crate::fxcm::utils;
 
+struct DropGuard<T : Fn()> {
+    destructor : T
+}
+
+impl<T : Fn()> Drop for DropGuard<T> {
+    fn drop(&mut self) {
+        let closure = &self.destructor;
+        closure()
+    }
+}
+
 enum FxcmTableType {
     _OpenPosition = 1,
     _ClosedPosition,
@@ -34,10 +45,6 @@ impl FxcmTradingService {
         println!("Retrieving account id");
         fxcm_service.account_id = FxcmTradingService::retrieve_account_id(api_host, &fxcm_service.authorization_token).
             context("Failed to retrieve account id")?;
-
-        println!("Subscribing to order table");
-        FxcmTradingService::subscribe_to_order_table(api_host, &fxcm_service.authorization_token).
-            context("Failed to subscribe to order table")?;
 
         println!("Successfully established connection to {}", api_host);
         Ok(fxcm_service)
@@ -110,12 +117,50 @@ impl FxcmTradingService {
         Ok(String::from(account_id))
     }
 
-    fn subscribe_to_order_table(api_host : &str, authorization_token : &str) -> anyhow::Result<()> {
+    fn subscribe_to_order_table(&self) -> anyhow::Result<DropGuard<impl Fn()>> {
+        println!("Subscribing to order table");
+
         let params = vec!((String::from("models"), String::from("Order")));
-        utils::http_post_json(authorization_token, api_host, "trading/subscribe/", &params).map(|_| ())
+        utils::http_post_json(&self.authorization_token, &self.host, "trading/subscribe/", &params).map(|_| ())?;
+
+        let token = self.authorization_token.clone();
+        let host = self.host.clone();
+        let destructor = move || { let _r = FxcmTradingService::unsubscribe_from_order_table(&token, &host); };
+        Ok(DropGuard { destructor })
+    }
+
+    fn unsubscribe_from_order_table(authorization_token : &str, host : &str) -> anyhow::Result<()> {
+        println!("Unsubscribing from order table");
+
+        let params = vec!((String::from("models"), String::from("Order")));
+        utils::http_post_json(authorization_token, host, "trading/unsubscribe/", &params).map(|_| ())
+    }
+
+    fn subscribe_to_market_updates(&self, symbol : &str) -> anyhow::Result<DropGuard<impl Fn()>> {
+        println!("Subscribing to market updates for {}", symbol);
+        let http_params = vec!(
+            (String::from("pairs"), String::from(symbol)));
+
+        utils::http_post_json(&self.authorization_token, &self.host, "subscribe/", &http_params)?;
+
+        let token = self.authorization_token.clone();
+        let host = self.host.clone();
+        let symbol_copy = String::from(symbol);
+        let destructor = move || { let _r = FxcmTradingService::unsubscribe_from_market_updates(&token, &host, &symbol_copy); };
+        Ok(DropGuard { destructor })
+    }
+
+    fn unsubscribe_from_market_updates(authorization_token : &str, host : &str, symbol : &str) -> anyhow::Result<()> {
+        println!("Unubscribing from market updates for {}", symbol);
+        let http_params = vec!(
+            (String::from("pairs"), String::from(symbol)));
+
+        utils::http_post_json(authorization_token, host, "trading/unsubscribe/", &http_params).map(|_| ())
     }
 
     fn open_trade(&mut self, symbol : &str, amount_in_lots : u32, is_buy : bool, options : &trading_lib::TradeOptions) -> anyhow::Result<trading_lib::TradeId> {
+        let _subscribe_guard = self.subscribe_to_order_table().context("Failed to subscribe to order table")?;
+
         let mut open_trade_params = vec!(
             (String::from("account_id"), self.account_id.clone()),
             (String::from("is_buy"), is_buy.to_string()),
@@ -216,8 +261,26 @@ impl trading_lib::TradingService for FxcmTradingService {
         Ok(10000)
     }
 
-    fn get_market_update(&mut self, _symbol : &str) -> anyhow::Result<(f32, f32)> {
-        todo!()
+    fn get_market_update(&mut self, symbol : &str) -> anyhow::Result<(f32, f32)> {
+        let _subscribe_guard = self.subscribe_to_market_updates(symbol)?;
+
+        println!("Waiting market update for {}", symbol);
+        let v = loop {
+            let trade_event_json = utils::read_message_from_socket(&mut self.socket)?;
+            let nested_json = trade_event_json.as_array().and_then(|a| a[1].as_str()).
+                ok_or_else(|| anyhow!("No nested array found in response {}", trade_event_json))?;
+            let v: Value = serde_json::from_str(nested_json)?;
+
+            if v["Symbol"].as_str() == Some(symbol) {
+                break v;
+            }
+        };
+
+        let bid_price = v["Rates"].as_array().and_then(|a| a[0].as_f64()).
+                ok_or_else(|| anyhow!("Failed to extract bid price from {}", v))?;
+        let ask_price = v["Rates"].as_array().and_then(|a| a[1].as_f64()).
+                ok_or_else(|| anyhow!("Failed to extract bid price from {}", v))?;
+        Ok((bid_price as f32, ask_price as f32))
     }
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &trading_lib::TradeOptions) -> anyhow::Result<trading_lib::TradeId> {

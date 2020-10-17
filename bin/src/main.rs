@@ -58,6 +58,9 @@ struct Opt {
 
     #[structopt(long, default_value = "3000", required_if("mode", "train"))]
     learning_iterations : u32,
+
+    #[structopt(short = "p", long, default_value = "0.0", required_if("mode", "trade"))]
+    min_profit : f32,
 }
 
 fn parse_date(date_str : &str) -> anyhow::Result<DateTime<Utc>> {
@@ -100,8 +103,8 @@ fn main() -> anyhow::Result<()> {
         Mode::trade => {
             let mut service = fxcm::service::FxcmTradingService::create(fxcm_host, fxcm_token)?;
             let mut model = pytorch_model::PyTorchModel::new();
-            let (trade_id, options) = trading_lib::open_trade(&mut service, &mut model, &opt.symbol.unwrap(),
-                opt.ammount.unwrap(), opt.timeframe.unwrap(), &Utc::now(), &opt.model.unwrap())?;
+            let (trade_id, options) = trading_lib::open_trade_with_profit(&mut service, &mut model, &opt.symbol.unwrap(),
+                opt.ammount.unwrap(), opt.min_profit, opt.timeframe.unwrap(), &Utc::now(), &opt.model.unwrap())?;
             println!("Opened trade {:?}, stop: {:?}, limit: {:?}", trade_id, options.stop, options.limit);
         }
     }
