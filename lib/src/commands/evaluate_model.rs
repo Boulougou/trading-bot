@@ -7,10 +7,10 @@ pub fn evaluate_model(model : &mut impl TradingModel,
                       storage : &mut impl Storage,
                       model_name : &str,
                       input_name : &str) -> anyhow::Result<Vec<(f32, f32)>> {
-    model.load(model_name)?;
+    let (_symbol, _timeframe) = model.load(model_name)?;
 
     let input_size = model.get_input_window()? as usize;
-    let history = storage.load_symbol_history(input_name)?;
+    let (history, _metadata) = storage.load_symbol_history(input_name)?;
 
     let num_predictions = 1 + history.len() as i64 - input_size as i64;
     if num_predictions <= 0 {
@@ -34,6 +34,8 @@ mod tests {
     use super::*;
     use crate::commands::utils::tests::*;
     use mockall::{Sequence, predicate::*};
+    use crate::trading_service::{HistoryMetadata, HistoryStep, HistoryTimeframe};
+    use chrono::{Utc};
 
     #[test]
     fn evaluate_model_with_history_smaller_than_input_size() {
@@ -45,7 +47,7 @@ mod tests {
             .times(1)
             .with(eq("modelA"))
             .in_sequence(&mut seq)
-            .return_once(|_| Ok(()));
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1)));
         model.expect_get_input_window()
             .times(1)
             .in_sequence(&mut seq)
@@ -53,7 +55,7 @@ mod tests {
         storage.expect_load_symbol_history()
             .with(eq("EUR_CAN_Hour1"))
             .times(1)
-            .return_once(|_| Ok(build_history(9)));
+            .return_once(|_| Ok(build_history_and_meta(9, "EUR/CAN", HistoryTimeframe::Hour1)));
 
         let result = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1");
 
@@ -70,7 +72,7 @@ mod tests {
             .times(1)
             .with(eq("modelA"))
             .in_sequence(&mut seq)
-            .return_once(|_| Ok(()));
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1)));
         model.expect_get_input_window()
             .times(1)
             .in_sequence(&mut seq)
@@ -79,7 +81,7 @@ mod tests {
         storage.expect_load_symbol_history()
             .with(eq("EUR_CAN_Hour1"))
             .times(1)
-            .return_once(|_| Ok(build_history(10)));
+            .return_once(|_| Ok(build_history_and_meta(10, "EUR/CAN", HistoryTimeframe::Hour1)));
 
         model.expect_predict()
             .with(eq(build_history(10)))
@@ -102,7 +104,7 @@ mod tests {
             .times(1)
             .with(eq("modelA"))
             .in_sequence(&mut seq)
-            .return_once(|_| Ok(()));
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1)));
         model.expect_get_input_window()
             .times(1)
             .in_sequence(&mut seq)
@@ -111,7 +113,7 @@ mod tests {
         storage.expect_load_symbol_history()
             .with(eq("EUR_CAN_Hour1"))
             .times(1)
-            .return_once(|_| Ok(build_history(12)));
+            .return_once(|_| Ok(build_history_and_meta(12, "EUR/CAN", HistoryTimeframe::Hour1)));
 
         model.expect_predict()
             .with(eq(build_history_offset(0, 10)))
@@ -154,7 +156,7 @@ mod tests {
         model.expect_load()
             .times(1)
             .with(eq("modelB"))
-            .return_once(|_| Ok(()));
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1)));
         model.expect_get_input_window()
             .times(1)
             .return_once(|| Err(anyhow!("Failed")));
@@ -171,7 +173,7 @@ mod tests {
         model.expect_load()
             .times(1)
             .with(eq("modelB"))
-            .return_once(|_| Ok(()));
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1)));
         model.expect_get_input_window()
             .times(1)
             .return_once(|| Ok(10));
@@ -192,14 +194,14 @@ mod tests {
         model.expect_load()
             .times(1)
             .with(eq("modelB"))
-            .return_once(|_| Ok(()));
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1)));
         model.expect_get_input_window()
             .times(1)
             .return_once(|| Ok(10));
         storage.expect_load_symbol_history()
             .with(eq("EUR_CAN_Hour1"))
             .times(1)
-            .return_once(|_| Ok(build_history(10)));
+            .return_once(|_| Ok(build_history_and_meta(10, "EUR/CAN", HistoryTimeframe::Hour1)));
 
         model.expect_predict()
             .with(eq(build_history(10)))
@@ -208,5 +210,13 @@ mod tests {
         let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
 
         assert!(result.is_err());
+    }
+
+    fn build_history_and_meta(num_steps : u32, symbol : &str, timeframe : HistoryTimeframe) -> (Vec<HistoryStep>, HistoryMetadata) {
+        let history_metadata = HistoryMetadata { symbol : String::from(symbol),
+            timeframe, from_date : Utc::now(), to_date : Utc::now()
+        };
+
+        (build_history(num_steps), history_metadata)
     }
 }

@@ -9,7 +9,7 @@ pub fn train_model<T : TradingModel>(model : &mut T,
                    extra_training_params : &T::TrainingParams,
                    output_name : &str) -> anyhow::Result<()> {
 
-    let history = storage.load_symbol_history(input_name)?;
-    model.train(&history, input_window, prediction_window, extra_training_params)?;
+    let (history, metadata) = storage.load_symbol_history(input_name)?;
+    model.train(&history, &metadata, input_window, prediction_window, extra_training_params)?;
     model.save(output_name)
 }

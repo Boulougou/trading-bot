@@ -37,7 +37,8 @@ pub fn fetch_symbol_history(service : &mut impl TradingService,
         symbol.replace("/", "_"), timeframe,
         since_date.format("%Y%m%d%H%M"),
         to_date.format("%Y%m%d%H%M"));
-    storage.save_symbol_history(&entry_name, &history)?;
+    let history_metadata = HistoryMetadata { symbol : String::from(symbol), timeframe, from_date : *since_date, to_date : *to_date };
+    storage.save_symbol_history(&entry_name, &history, &history_metadata)?;
 
     Ok(())
 }
@@ -65,10 +66,15 @@ mod tests {
             .times(1)
             .return_once(move |_, _, _, _| Ok(build_history(max_history_steps_per_call)));
 
+        let history_metadata = HistoryMetadata { symbol : String::from("EUR/USD"),
+            timeframe : HistoryTimeframe::Min1, from_date : since_date, to_date
+        };
         storage.expect_save_symbol_history()
-            .with(eq("EUR_USD_Min1_201901012130_201901012310"), eq(build_history(max_history_steps_per_call)))
+            .with(eq("EUR_USD_Min1_201901012130_201901012310"),
+                  eq(build_history(max_history_steps_per_call)),
+                  eq(history_metadata))
             .times(1)
-            .return_once(|_, _| Ok(()));
+            .return_once(|_, _, _| Ok(()));
 
         fetch_symbol_history(&mut service, &mut storage, "EUR/USD", HistoryTimeframe::Min1, &since_date, &to_date)?;
 
@@ -101,10 +107,13 @@ mod tests {
             .times(1)
             .return_once(move |_, _, _, _| Ok(build_history_offset(2 * max_history_steps_per_call, 1)));
 
+        let history_metadata = HistoryMetadata { symbol : String::from("EUR/CAN"),
+            timeframe : HistoryTimeframe::Min1, from_date : since_date, to_date
+        };
         storage.expect_save_symbol_history()
-            .with(eq("EUR_CAN_Min1_201901012130_201901020051"), eq(build_history(2 * max_history_steps_per_call + 1)))
+            .with(eq("EUR_CAN_Min1_201901012130_201901020051"), eq(build_history(2 * max_history_steps_per_call + 1)), eq(history_metadata))
             .times(1)
-            .return_once(|_, _| Ok(()));
+            .return_once(|_, _, _| Ok(()));
 
         fetch_symbol_history(&mut service, &mut storage, "EUR/CAN", HistoryTimeframe::Min1, &since_date, &to_date)?;
 
@@ -132,10 +141,13 @@ mod tests {
             .times(1)
             .return_once(move |_, _, _, _| Ok(build_history_offset(max_history_steps_per_call, 1)));
 
+        let history_metadata = HistoryMetadata { symbol : String::from("EUR/CAN"),
+            timeframe : HistoryTimeframe::Min5, from_date : since_date, to_date
+        };
         storage.expect_save_symbol_history()
-            .with(eq("EUR_CAN_Min5_201901012130_201901012225"), eq(build_history(max_history_steps_per_call + 1)))
+            .with(eq("EUR_CAN_Min5_201901012130_201901012225"), eq(build_history(max_history_steps_per_call + 1)), eq(history_metadata))
             .times(1)
-            .return_once(|_, _| Ok(()));
+            .return_once(|_, _, _| Ok(()));
 
         fetch_symbol_history(&mut service, &mut storage, "EUR/CAN", HistoryTimeframe::Min5, &since_date, &to_date)?;
 
@@ -163,10 +175,13 @@ mod tests {
             .times(1)
             .return_once(move |_, _, _, _| Ok(build_history_offset(max_history_steps_per_call, 1)));
 
+        let history_metadata = HistoryMetadata { symbol : String::from("EUR/CAN"),
+            timeframe : HistoryTimeframe::Hour1, from_date : since_date, to_date
+        };
         storage.expect_save_symbol_history()
-            .with(eq("EUR_CAN_Hour1_201901012130_201901020830"), eq(build_history(max_history_steps_per_call + 1)))
+            .with(eq("EUR_CAN_Hour1_201901012130_201901020830"), eq(build_history(max_history_steps_per_call + 1)), eq(history_metadata))
             .times(1)
-            .return_once(|_, _| Ok(()));
+            .return_once(|_, _, _| Ok(()));
 
         fetch_symbol_history(&mut service, &mut storage, "EUR/CAN", HistoryTimeframe::Hour1, &since_date, &to_date)?;
 

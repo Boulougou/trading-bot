@@ -2,13 +2,16 @@ use trading_lib;
 use tch::nn::{Module, OptimizerConfig};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+use trading_lib::HistoryTimeframe;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TrainingMetadata {
     input_window : u32,
     prediction_window : u32,
     min_input_value : f32,
-    max_input_value : f32
+    max_input_value : f32,
+    symbol : String,
+    timeframe : HistoryTimeframe
 }
 
 #[derive(Debug)]
@@ -27,8 +30,8 @@ impl PyTorchModel {
         PyTorchModel{ training_artifacts : None }
     }
 
-    fn load_from_disk(&mut self, name : &str) -> anyhow::Result<()> {
-        let file = std::fs::File::open(format!("{}.json", name))?;
+    fn load_from_disk(&mut self, name : &str) -> anyhow::Result<(String, HistoryTimeframe)> {
+        let file = std::fs::File::open(format!("{}/training_metadata.json", name))?;
         let training_metadata : TrainingMetadata = ::serde_json::from_reader(&file)?;
 
         let input_per_history_step : u32 = 8;
@@ -39,12 +42,13 @@ impl PyTorchModel {
         let mut var_store = tch::nn::VarStore::new(tch::Device::Cpu);
         let neural_net = tch::nn::seq()
             .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, output_layer_size, Default::default()));
-        var_store.load(format!("{}.var", name))?;
+        var_store.load(format!("{}/model.var", name))?;
 
         let training_artifacts = TrainingArtifacts { var_store, neural_net, metadata : training_metadata };
+        let return_value = (training_artifacts.metadata.symbol.clone(), training_artifacts.metadata.timeframe);
         self.training_artifacts = Some(training_artifacts);
         
-        Ok(())
+        Ok(return_value)
     }
 
     fn prepare_input_data(history : &Vec<trading_lib::HistoryStep>, input_window : u32, prediction_window : u32,
@@ -112,8 +116,10 @@ impl trading_lib::TradingModel for PyTorchModel {
 
     type TrainingParams = (f32, u32);
 
-    fn train(&mut self, history : &Vec<trading_lib::HistoryStep>, input_window : u32, prediction_window : u32,
-            &(learning_rate, num_iterations) : &Self::TrainingParams) -> anyhow::Result<()> {
+    fn train(&mut self, history : &Vec<trading_lib::HistoryStep>,
+             history_metadata : &trading_lib::HistoryMetadata,
+             input_window : u32, prediction_window : u32,
+             &(learning_rate, num_iterations) : &Self::TrainingParams) -> anyhow::Result<()> {
         let (min_ever_bid_price, max_ever_bid_price) = PyTorchModel::find_min_max_prices(history);
 
         let (input, expected_output, input_per_history_step, output_per_history_step) = PyTorchModel::prepare_input_data(
@@ -167,7 +173,10 @@ impl trading_lib::TradingModel for PyTorchModel {
             );
         }
 
-        let training_metadata = TrainingMetadata { input_window, prediction_window, min_input_value : min_ever_bid_price, max_input_value : max_ever_bid_price };
+        let training_metadata = TrainingMetadata { input_window, prediction_window,
+            min_input_value : min_ever_bid_price, max_input_value : max_ever_bid_price,
+            timeframe : history_metadata.timeframe, symbol : history_metadata.symbol.clone()
+        };
         self.training_artifacts = Some(TrainingArtifacts { var_store, neural_net, metadata : training_metadata });
 
         Ok(())
@@ -205,14 +214,15 @@ impl trading_lib::TradingModel for PyTorchModel {
     fn save(&mut self, output_name : &str) -> anyhow::Result<()> {
         let training_artifacts = self.training_artifacts.as_ref().ok_or(anyhow!("Model has not been trained yet"))?;
 
-        // TODO store metadata to a json
-        training_artifacts.var_store.save(format!("{}.var", output_name))?;
-        let file = std::fs::File::create(format!("{}.json", output_name))?;
+        std::fs::create_dir_all(format!("models/{}", output_name))?;
+
+        training_artifacts.var_store.save(format!("models/{}/model.var", output_name))?;
+        let file = std::fs::File::create(format!("models/{}/training_metadata.json", output_name))?;
         ::serde_json::to_writer(&file, &training_artifacts.metadata)?;
         Ok(())
     }
 
-    fn load(&mut self, name : &str) -> anyhow::Result<()> {
+    fn load(&mut self, name : &str) -> anyhow::Result<(String, HistoryTimeframe)> {
         self.load_from_disk(name)
     }
 }

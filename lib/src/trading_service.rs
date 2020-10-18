@@ -22,6 +22,14 @@ pub struct HistoryStep {
     pub ask_candle : Candlestick
 }
 
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct HistoryMetadata {
+    pub symbol : String,
+    pub timeframe : HistoryTimeframe,
+    pub from_date : DateTime<Utc>,
+    pub to_date : DateTime<Utc>
+}
+
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy, EnumString, Deserialize, Serialize)]
 pub enum HistoryTimeframe {
     Min1,

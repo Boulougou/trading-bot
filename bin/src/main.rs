@@ -26,13 +26,13 @@ struct Opt {
     #[structopt(possible_values = &Mode::variants())]
     mode : Mode,
 
-    #[structopt(short, long, required_if("mode", "fetch"), required_if("mode", "trade"))]
+    #[structopt(short, long, required_if("mode", "fetch"))]
     symbol : Option<String>,
 
     #[structopt(short, long, required_if("mode", "trade"))]
     amount: Option<u32>,
 
-    #[structopt(short, long, required_if("mode", "fetch"), required_if("mode", "trade"))]
+    #[structopt(short, long, required_if("mode", "fetch"))]
     timeframe : Option<trading_lib::HistoryTimeframe>,
 
     #[structopt(long, required_if("mode", "fetch"))]
@@ -103,8 +103,8 @@ fn main() -> anyhow::Result<()> {
         Mode::trade => {
             let mut service = fxcm::service::FxcmTradingService::create(fxcm_host, fxcm_token)?;
             let mut model = pytorch_model::PyTorchModel::new();
-            let (trade_id, options) = trading_lib::open_trade_with_profit(&mut service, &mut model, &opt.symbol.unwrap(),
-                opt.amount.unwrap(), opt.min_profit, opt.timeframe.unwrap(), &Utc::now(), &opt.model.unwrap())?;
+            let (trade_id, options) = trading_lib::open_trade_with_profit(&mut service, &mut model,
+                opt.amount.unwrap(), opt.min_profit, &Utc::now(), &opt.model.unwrap())?;
             println!("Opened trade {:?}, stop: {:?}, limit: {:?}", trade_id, options.stop, options.limit);
         }
     }
