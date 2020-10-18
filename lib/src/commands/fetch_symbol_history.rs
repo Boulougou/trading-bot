@@ -4,11 +4,6 @@ use std::ops::Add;
 use crate::trading_service::*;
 use crate::storage::*;
 
-#[cfg(test)]
-use mockall::{predicate::*};
-#[cfg(test)]
-use chrono::{TimeZone};
-
 pub fn fetch_symbol_history(service : &mut impl TradingService,
                             storage : &mut impl Storage,
                             symbol : &str,
@@ -50,6 +45,9 @@ pub fn fetch_symbol_history(service : &mut impl TradingService,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::utils::tests::*;
+    use mockall::{predicate::*};
+    use chrono::{TimeZone};
 
     #[test]
     fn fetch_history_fitting_in_one_request() -> anyhow::Result<()> {
@@ -173,25 +171,5 @@ mod tests {
         fetch_symbol_history(&mut service, &mut storage, "EUR/CAN", HistoryTimeframe::Hour1, &since_date, &to_date)?;
 
         Ok(())
-    }
-
-    fn build_history(num_steps : u32) -> Vec<HistoryStep> {
-        build_history_offset(0, num_steps)
-    }
-
-    fn build_history_offset(offset : u32, num_steps : u32) -> Vec<HistoryStep> {
-        let step = HistoryStep {
-            timestamp : 32432,
-            bid_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 },
-            ask_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 }
-        };
-
-        let mut history = Vec::new();
-        for i in 0..num_steps {
-            let current_step = HistoryStep { timestamp : i + offset, ..step.clone() };
-            history.push(current_step);
-        }
-
-        history
     }
 }

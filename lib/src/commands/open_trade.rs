@@ -5,25 +5,20 @@ use anyhow::anyhow;
 use crate::trading_service::*;
 use crate::trading_model::*;
 
-#[cfg(test)]
-use mockall::{Sequence, predicate::*};
-#[cfg(test)]
-use chrono::{TimeZone};
-
 pub fn open_trade(service : &mut impl TradingService,
                   model : &mut impl TradingModel,
                   symbol : &str,
-                  ammount : u32,
+                  amount : u32,
                   timeframe : HistoryTimeframe,
                   current_time : &DateTime<Utc>,
                   model_name : &str) -> anyhow::Result<(TradeId, TradeOptions)> {
-    open_trade_with_profit(service, model, symbol, ammount, 0.0, timeframe, current_time, model_name)
+    open_trade_with_profit(service, model, symbol, amount, 0.0, timeframe, current_time, model_name)
 }
 
 pub fn open_trade_with_profit(service : &mut impl TradingService,
                   model : &mut impl TradingModel,
                   symbol : &str,
-                  ammount : u32,
+                  amount : u32,
                   min_percent_profit : f32,
                   timeframe : HistoryTimeframe,
                   current_time : &DateTime<Utc>,
@@ -50,7 +45,7 @@ pub fn open_trade_with_profit(service : &mut impl TradingService,
 
     if possible_profit / cost > min_percent_profit {
         let trade_options = TradeOptions { stop : None, limit : Some(max_bid_price) };
-        let trade_id = service.open_buy_trade(symbol, ammount, &trade_options)?;
+        let trade_id = service.open_buy_trade(symbol, amount, &trade_options)?;
         Ok((trade_id, trade_options))
     }
     else {
@@ -63,6 +58,9 @@ pub fn open_trade_with_profit(service : &mut impl TradingService,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::utils::tests::*;
+    use mockall::{Sequence, predicate::*};
+    use chrono::{TimeZone};
 
     #[test]
     fn open_trade_when_prediction_range_covers_current_spread() -> anyhow::Result<()> {
@@ -230,25 +228,5 @@ mod tests {
             "EUR/USD", 12, 2.01, HistoryTimeframe::Min1, &current_date, "trained_model");
 
         assert!(result.is_err());
-    }
-
-    fn build_history(num_steps : u32) -> Vec<HistoryStep> {
-        build_history_offset(0, num_steps)
-    }
-
-    fn build_history_offset(offset : u32, num_steps : u32) -> Vec<HistoryStep> {
-        let step = HistoryStep {
-            timestamp : 32432,
-            bid_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 },
-            ask_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 }
-        };
-
-        let mut history = Vec::new();
-        for i in 0..num_steps {
-            let current_step = HistoryStep { timestamp : i + offset, ..step.clone() };
-            history.push(current_step);
-        }
-
-        history
     }
 }

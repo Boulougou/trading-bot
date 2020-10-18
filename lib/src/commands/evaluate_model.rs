@@ -3,11 +3,6 @@ use anyhow::anyhow;
 use crate::trading_model::*;
 use crate::storage::*;
 
-#[cfg(test)]
-use crate::trading_service::*;
-#[cfg(test)]
-use mockall::{Sequence, predicate::*};
-
 pub fn evaluate_model(model : &mut impl TradingModel,
                       storage : &mut impl Storage,
                       model_name : &str,
@@ -37,6 +32,8 @@ pub fn evaluate_model(model : &mut impl TradingModel,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::utils::tests::*;
+    use mockall::{Sequence, predicate::*};
 
     #[test]
     fn evaluate_model_with_history_smaller_than_input_size() {
@@ -211,25 +208,5 @@ mod tests {
         let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
 
         assert!(result.is_err());
-    }
-
-    fn build_history(num_steps : u32) -> Vec<HistoryStep> {
-        build_history_offset(0, num_steps)
-    }
-
-    fn build_history_offset(offset : u32, num_steps : u32) -> Vec<HistoryStep> {
-        let step = HistoryStep {
-            timestamp : 32432,
-            bid_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 },
-            ask_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 }
-        };
-
-        let mut history = Vec::new();
-        for i in 0..num_steps {
-            let current_step = HistoryStep { timestamp : i + offset, ..step.clone() };
-            history.push(current_step);
-        }
-
-        history
     }
 }
