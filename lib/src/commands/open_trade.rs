@@ -1,9 +1,10 @@
 use std::ops::Sub;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc, Duration, TimeZone};
 use anyhow::anyhow;
 
 use crate::trading_service::*;
 use crate::trading_model::*;
+use crate::commands::utils;
 
 pub fn open_trade(service : &mut impl TradingService,
                   model : &mut impl TradingModel,
@@ -28,8 +29,21 @@ pub fn open_trade_with_profit(service : &mut impl TradingService,
     let input_size = model.get_input_window()? as usize;
     let request_to_date = current_time;
     let history_buffer = 5;
-    let request_from_date = request_to_date.sub(Duration::minutes(history_buffer + input_size as i64));
-    let history = service.get_symbol_history(symbol, timeframe, &request_from_date, &request_to_date)?;
+    let request_from_date = request_to_date.sub(Duration::minutes(timeframe.in_minutes() as i64 * (history_buffer + input_size as i64)));
+    let mut history = service.get_symbol_history(symbol, timeframe, &request_from_date, &request_to_date)?;
+
+    if timeframe > HistoryTimeframe::Hour8 {
+        let last_timestamp = history.last().map(|s| s.timestamp).ok_or(anyhow!("Fetched history was empty"))?;
+        let hour8_history = service.get_symbol_history(symbol, HistoryTimeframe::Hour8,
+                                                      &Utc.timestamp(last_timestamp as i64, 0), &request_to_date)?;
+        history.push(utils::consolidate_history(&hour8_history));
+    }
+    else if timeframe > HistoryTimeframe::Min1 {
+        let last_timestamp = history.last().map(|s| s.timestamp).ok_or(anyhow!("Fetched history was empty"))?;
+        let min1_history = service.get_symbol_history(symbol, HistoryTimeframe::Min1,
+                                     &Utc.timestamp(last_timestamp as i64, 0), &request_to_date)?;
+        history.push(utils::consolidate_history(&min1_history));
+    }
 
     if history.len() < input_size {
         return Err(anyhow!("History size must be at least {} (was {})", input_size, history.len()));
@@ -58,6 +72,7 @@ pub fn open_trade_with_profit(service : &mut impl TradingService,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::utils;
     use crate::commands::utils::tests::*;
     use mockall::{Sequence, predicate::*};
     use chrono::{TimeZone};
@@ -228,5 +243,111 @@ mod tests {
             "EUR/USD", 12, 2.01, HistoryTimeframe::Min1, &current_date, "trained_model");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn open_trade_fetching_min1_candlesticks_when_passed_timeframe_not_granular_enough() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut service = MockTradingService::new();
+
+        let input_window = 10;
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .with(eq("trained_model"))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move || Ok(input_window));
+
+        let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
+        let since_date = current_date.sub(Duration::hours(8 * (input_window as i64 + 5)));
+        let hour8_history = build_history(input_window + 6);
+        let min1_history = build_history(100);
+        let mut concatenated_history = build_history_offset(7, input_window - 1);
+        concatenated_history.push(utils::consolidate_history(&min1_history));
+
+        let last_hour8_date = Utc.timestamp(hour8_history.last().unwrap().timestamp as i64, 0);
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Hour8), eq(since_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(hour8_history));
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Min1), eq(last_hour8_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(min1_history));
+
+        model.expect_predict()
+            .with(eq(concatenated_history))
+            .times(1)
+            .return_once(|_| Ok((1.0, 1.9)));
+
+        service.expect_get_market_update()
+            .with(eq("EUR/USD"))
+            .times(1)
+            .return_once(|_| Ok((1.4, 1.6)));
+        service.expect_open_buy_trade()
+            .with(eq("EUR/USD"), eq(12), eq(TradeOptions { stop : None, limit : Some(1.9) }))
+            .times(1)
+            .return_once(|_, _, _| Ok(String::from("trade#1138")));
+        open_trade(&mut service, &mut model, "EUR/USD", 12,
+                   HistoryTimeframe::Hour8, &current_date, "trained_model")?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn open_trade_fetching_hour8_candlesticks_when_passed_timeframe_not_granular_enough() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut service = MockTradingService::new();
+
+        let input_window = 10;
+        let mut seq = Sequence::new();
+        model.expect_load()
+            .with(eq("trained_model"))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(()));
+        model.expect_get_input_window()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(move || Ok(input_window));
+
+        let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
+        let since_date = current_date.sub(Duration::days(30 * (input_window as i64 + 5)));
+        let month1_history = build_history(input_window + 6);
+        let hour8_history = build_history(100);
+        let mut concatenated_history = build_history_offset(7, input_window - 1);
+        concatenated_history.push(utils::consolidate_history(&hour8_history));
+
+        let last_month1_date = Utc.timestamp(month1_history.last().unwrap().timestamp as i64, 0);
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Month1), eq(since_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(month1_history));
+        service.expect_get_symbol_history()
+            .with(eq("EUR/USD"), eq(HistoryTimeframe::Hour8), eq(last_month1_date), eq(current_date))
+            .times(1)
+            .return_once(move |_, _, _, _| Ok(hour8_history));
+
+        model.expect_predict()
+            .with(eq(concatenated_history))
+            .times(1)
+            .return_once(|_| Ok((1.0, 1.9)));
+
+        service.expect_get_market_update()
+            .with(eq("EUR/USD"))
+            .times(1)
+            .return_once(|_| Ok((1.4, 1.6)));
+        service.expect_open_buy_trade()
+            .with(eq("EUR/USD"), eq(12), eq(TradeOptions { stop : None, limit : Some(1.9) }))
+            .times(1)
+            .return_once(|_, _, _| Ok(String::from("trade#1138")));
+        open_trade(&mut service, &mut model, "EUR/USD", 12,
+                   HistoryTimeframe::Month1, &current_date, "trained_model")?;
+
+        Ok(())
     }
 }
