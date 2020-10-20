@@ -11,6 +11,7 @@ anyhow = "1.0.32"
 chrono = { version = "0.4.19", features = ["serde"] }
 serde = {version = "1.0.57", features = ["derive"] }
 strum = { version = "0.19", features = ["derive"] }
+getset = "0.1.1"
 
 [dev-dependencies]
 mockall = "0.8.1"

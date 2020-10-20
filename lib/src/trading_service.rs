@@ -73,6 +73,15 @@ pub struct TradeOptions {
     pub stop : Option<f32>
 }
 
+#[derive(Debug)]
+pub struct AccountSummary {
+    pub equity : f32,
+    pub used_margin : f32,
+    pub usable_margin : f32,
+    pub used_maintenance_margin : f32,
+    pub usable_maintenance_margin : f32
+}
+
 #[cfg_attr(test, automock)]
 pub trait TradingService {
     fn get_trade_symbols(&mut self) -> anyhow::Result<Vec<String>>;
@@ -80,6 +89,7 @@ pub trait TradingService {
         since_date : &DateTime<Utc>, to_date : &DateTime<Utc>) -> anyhow::Result<Vec<HistoryStep>>;
     fn max_history_steps_per_call(&mut self) -> anyhow::Result<u32>;
 
+    fn get_account_summary(&mut self) -> anyhow::Result<AccountSummary>;
     fn get_market_update(&mut self, symbol : &str) -> anyhow::Result<(f32, f32)>;
 
     fn open_buy_trade(&mut self, symbol : &str, amount_in_lots : u32, options : &TradeOptions) -> anyhow::Result<TradeId>;

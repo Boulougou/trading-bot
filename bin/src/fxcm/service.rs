@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use anyhow::{anyhow, Context};
 use chrono::{DateTime, Utc};
 use crate::fxcm::utils;
+use trading_lib::AccountSummary;
 
 struct DropGuard<T : Fn()> {
     destructor : T
@@ -259,6 +260,22 @@ impl trading_lib::TradingService for FxcmTradingService {
     
     fn max_history_steps_per_call(&mut self) -> anyhow::Result<u32> {
         Ok(10000)
+    }
+
+    fn get_account_summary(&mut self) -> anyhow::Result<trading_lib::AccountSummary> {
+        let get_model_params = vec!((String::from("models"), String::from("Account")));
+        let json_root : Value = utils::http_get_json(&self.authorization_token, &self.host, "trading/get_model/", &get_model_params)?;
+
+        let accounts_array = &json_root["accounts"].as_array().ok_or_else(|| anyhow!("No 'accounts' array found in {}", json_root))?;
+        let first_account = accounts_array.first().ok_or_else(|| anyhow!("'accounts' array is empty in {}", json_root))?;
+
+        let equity = first_account["equity"].as_f64().ok_or_else(|| anyhow!("No 'equity' found in {}", first_account))? as f32;
+        let used_margin = first_account["usdMr"].as_f64().ok_or_else(|| anyhow!("No 'usdMr' found in {}", first_account))? as f32;
+        let usable_margin = first_account["usableMargin"].as_f64().ok_or_else(|| anyhow!("No 'usableMargin' found in {}", first_account))? as f32;
+        let used_maintenance_margin = first_account["usdMr3"].as_f64().ok_or_else(|| anyhow!("No 'usdMr3' found in {}", first_account))? as f32;
+        let usable_maintenance_margin = first_account["usableMargin3"].as_f64().ok_or_else(|| anyhow!("No 'usableMargin3' found in {}", first_account))? as f32;
+
+        Ok(AccountSummary { equity, used_margin, usable_margin, used_maintenance_margin, usable_maintenance_margin })
     }
 
     fn get_market_update(&mut self, symbol : &str) -> anyhow::Result<(f32, f32)> {
