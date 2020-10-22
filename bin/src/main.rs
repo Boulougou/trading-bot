@@ -66,6 +66,9 @@ struct Opt {
     max_profit : Option<f32>,
 
     #[structopt(long)]
+    max_loss : Option<f32>,
+
+    #[structopt(long)]
     max_used_margin : Option<f32>
 }
 
@@ -117,6 +120,9 @@ fn main() -> anyhow::Result<()> {
             if let Some(profit) = opt.max_profit {
                 trade_options.set_max_profit_percent(profit);
             }
+            if let Some(loss) = opt.max_loss {
+                trade_options.set_max_loss_percent(loss);
+            }
             if let Some(margin) = opt.max_used_margin {
                 trade_options.set_max_used_margin_percent(margin);
             }
@@ -128,7 +134,5 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // pytorch_model::run_linear_regression();
-    // pytorch_model::run_neural_network();
     Ok(())
 }
