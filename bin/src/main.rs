@@ -59,8 +59,11 @@ struct Opt {
     #[structopt(long, default_value = "3000", required_if("mode", "train"))]
     learning_iterations : u32,
 
-    #[structopt(short = "p", long)]
+    #[structopt(long)]
     min_profit : Option<f32>,
+
+    #[structopt(long)]
+    max_profit : Option<f32>,
 
     #[structopt(long)]
     max_used_margin : Option<f32>
@@ -110,6 +113,9 @@ fn main() -> anyhow::Result<()> {
             let mut trade_options = trading_lib::OpenTradeOptions::default();
             if let Some(profit) = opt.min_profit {
                 trade_options.set_min_profit_percent(profit);
+            }
+            if let Some(profit) = opt.max_profit {
+                trade_options.set_max_profit_percent(profit);
             }
             if let Some(margin) = opt.max_used_margin {
                 trade_options.set_max_used_margin_percent(margin);
