@@ -59,6 +59,9 @@ struct Opt {
     #[structopt(long, default_value = "3000", required_if("mode", "train"))]
     learning_iterations : u32,
 
+    #[structopt(short, long)]
+    continue_training : bool,
+
     #[structopt(long)]
     min_profit : Option<f32>,
 
@@ -99,9 +102,11 @@ fn main() -> anyhow::Result<()> {
         Mode::train => {
             let mut storage = file_storage::FileStorage::create()?;
             let mut model = pytorch_model::PyTorchModel::new();
+            let mode = if opt.continue_training { trading_lib::TrainingOutputMode::ContinueTraining }
+                else { trading_lib::TrainingOutputMode::OverwriteModel };
             trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap(),
                 opt.input_window.unwrap(), opt.pred_window.unwrap(),
-                &(opt.learning_rate, opt.learning_iterations), &opt.model.unwrap())?;
+                &(opt.learning_rate, opt.learning_iterations), &opt.model.unwrap(), mode)?;
         },
         Mode::eval => {
             let mut storage = file_storage::FileStorage::create()?;

@@ -47,7 +47,7 @@ impl PyTorchModel {
         let training_artifacts = TrainingArtifacts { var_store, neural_net, metadata : training_metadata };
         let return_value = (training_artifacts.metadata.symbol.clone(), training_artifacts.metadata.timeframe);
         self.training_artifacts = Some(training_artifacts);
-        
+
         Ok(return_value)
     }
 
@@ -131,13 +131,13 @@ impl trading_lib::TradingModel for PyTorchModel {
         // let hidden_layer_size : i64 = input_layer_size / 2;
         let output_layer_size : i64 = output_per_history_step as i64;
 
-        let var_store = tch::nn::VarStore::new(tch::Device::Cpu);
+        let mut var_store = tch::nn::VarStore::new(tch::Device::Cpu);
         let neural_net = tch::nn::seq()
             .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, output_layer_size, Default::default()));
-        // let neural_net = tch::nn::seq()
-            // .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
-            // .add_fn(|xs| xs.relu())
-            // .add(tch::nn::linear(var_store.root(), hidden_layer_size, output_layer_size, Default::default()));
+
+        if let Some(artifacts) = &self.training_artifacts {
+            var_store.copy(&artifacts.var_store)?;
+        }
 
         let mut optimizer = tch::nn::Adam::default().build(&var_store, learning_rate as f64).unwrap();
 
@@ -214,10 +214,10 @@ impl trading_lib::TradingModel for PyTorchModel {
     fn save(&mut self, output_name : &str) -> anyhow::Result<()> {
         let training_artifacts = self.training_artifacts.as_ref().ok_or(anyhow!("Model has not been trained yet"))?;
 
-        std::fs::create_dir_all(format!("models/{}", output_name))?;
+        std::fs::create_dir_all(format!("{}", output_name))?;
 
-        training_artifacts.var_store.save(format!("models/{}/model.var", output_name))?;
-        let file = std::fs::File::create(format!("models/{}/training_metadata.json", output_name))?;
+        training_artifacts.var_store.save(format!("{}/model.var", output_name))?;
+        let file = std::fs::File::create(format!("{}/training_metadata.json", output_name))?;
         ::serde_json::to_writer(&file, &training_artifacts.metadata)?;
         Ok(())
     }
