@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use trading_lib::HistoryTimeframe;
 use rand::prelude::SliceRandom;
 use rand::SeedableRng;
-use chrono::{Utc, TimeZone, Datelike};
+use chrono::{Utc, TimeZone, Datelike, Timelike};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TrainingMetadata {
@@ -64,13 +64,15 @@ impl PyTorchModel {
         let normalize = |v : f32| PyTorchModel::normalize_value_f(v, min_ever_bid_price, max_ever_bid_price);
         let mut input = Vec::new();
         let mut expected_output = Vec::new();
-        let input_per_history_step : u32 = 10;
+        let input_per_history_step : u32 = 11;
+        // let input_per_history_step : u32 = 8;
         let output_per_history_step : u32 = 2;
         for (input_steps, future_steps) in input_events {
             for s in input_steps {
                 let datetime = Utc.timestamp(s.timestamp as i64, 0);
                 input.push(datetime.month0() as f32 / 11.0 - 0.5);
                 input.push(datetime.day0() as f32 / 30.0 - 0.5);
+                input.push(datetime.hour() as f32 / 23.0 - 0.5);
 
                 input.push(normalize(s.bid_candle.price_low));
                 input.push(normalize(s.bid_candle.price_high));
@@ -123,8 +125,9 @@ impl PyTorchModel {
     }
 
     fn build_neural_net(input_layer_size: i64, output_layer_size: i64, var_store: &mut tch::nn::VarStore) -> tch::nn::Sequential {
-        let hidden_layer_size : i64 = input_layer_size;// / 2;
+        let hidden_layer_size : i64 = input_layer_size / 32;
         let neural_net = tch::nn::seq()
+            // .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, output_layer_size, Default::default()));
             .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
             .add_fn(|xs| xs.relu())
             .add(tch::nn::linear(&var_store.root() / "output_layer", hidden_layer_size, output_layer_size, Default::default()));
