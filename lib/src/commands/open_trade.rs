@@ -5,7 +5,7 @@ use getset::{Setters};
 
 use crate::trading_service::*;
 use crate::trading_model::*;
-use crate::commands::utils;
+use crate::utils;
 
 #[derive(Debug, Setters)]
 #[getset(set = "pub")]
@@ -37,9 +37,9 @@ pub fn open_trade_with_options(service : &mut impl TradingService,
                   current_time : &DateTime<Utc>,
                   model_name : &str,
                   options : &OpenTradeOptions) -> anyhow::Result<(TradeId, Option<f32>, Option<f32>)> {
-    let (symbol, timeframe) = model.load(model_name)?;
+    let (symbol, timeframe, input_size, _prediction_window) = model.load(model_name)?;
 
-    let input_size = model.get_input_window()? as usize;
+    let input_size = input_size as usize;
     let request_to_date = current_time;
     let history_buffer = 100;
     let request_from_date = request_to_date.sub(Duration::minutes(timeframe.in_minutes() as i64 * (history_buffer + input_size as i64)));
@@ -106,8 +106,8 @@ pub fn open_trade_with_options(service : &mut impl TradingService,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::utils;
-    use crate::commands::utils::tests::*;
+    use crate::utils;
+    use crate::utils::tests::*;
     use mockall::{Sequence, predicate::*};
     use chrono::{TimeZone};
 
@@ -122,11 +122,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -170,11 +166,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -212,11 +204,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -262,11 +250,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -306,11 +290,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -356,11 +336,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -406,11 +382,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Min1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::minutes(input_window as i64 + 100));
@@ -451,11 +423,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Hour8)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Hour8, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::hours(8 * (input_window as i64 + 100)));
@@ -507,11 +475,7 @@ mod tests {
             .with(eq("trained_model"))
             .times(1)
             .in_sequence(&mut seq)
-            .return_once(|_| Ok((String::from("EUR/USD"), HistoryTimeframe::Month1)));
-        model.expect_get_input_window()
-            .times(1)
-            .in_sequence(&mut seq)
-            .return_once(move || Ok(input_window));
+            .return_once(move |_| Ok((String::from("EUR/USD"), HistoryTimeframe::Month1, input_window, 5)));
 
         let current_date = Utc.ymd(2019, 1, 1).and_hms(21, 30, 0);
         let since_date = current_date.sub(Duration::days(30 * (input_window as i64 + 100)));

@@ -9,5 +9,3 @@ pub use evaluate_model::*;
 
 mod open_trade;
 pub use open_trade::*;
-
-mod utils;

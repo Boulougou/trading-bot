@@ -1,4 +1,5 @@
 use crate::trading_service::*;
+use anyhow::anyhow;
 
 pub fn consolidate_history(min1_history: &Vec<HistoryStep>) -> HistoryStep {
     let first_step = min1_history.first().unwrap();
@@ -30,6 +31,39 @@ pub fn consolidate_history(min1_history: &Vec<HistoryStep>) -> HistoryStep {
 
     consolidated_step
 }
+
+pub fn extract_input_and_prediction_windows(history : &[HistoryStep], input_window : u32, prediction_window : u32)
+                                        -> anyhow::Result<Vec<(Vec<HistoryStep>, Vec<HistoryStep>)>> {
+    let input_size = history.len() as i64 - prediction_window as i64 - input_window as i64 + 1;
+    if input_size <= 0 {
+        return Err(anyhow!("History size {} is not big enough for input window {} and prediction window {}",
+            history.len(), input_window, prediction_window));
+    }
+    let input_size = input_size as usize;
+
+    let mut input_events = Vec::new();
+    for i in 0..input_size {
+        let input_end = i + input_window as usize;
+        let input_steps = Vec::from(&history[i..input_end]);
+        let future_steps = Vec::from(&history[input_end..input_end + prediction_window as usize]);
+
+        input_events.push((input_steps, future_steps));
+    }
+
+    Ok(input_events)
+}
+
+pub fn find_bid_price_range(history : &[HistoryStep]) -> (f32, f32) {
+    let mut min_bid_price = f32::INFINITY;
+    let mut max_bid_price = f32::NEG_INFINITY;
+    for s in history {
+        min_bid_price = min_bid_price.min(s.bid_candle.price_low);
+        max_bid_price = max_bid_price.max(s.bid_candle.price_high);
+    }
+
+    (min_bid_price, max_bid_price)
+}
+
 
 #[cfg(test)]
 pub mod tests {
@@ -63,16 +97,16 @@ pub mod tests {
     }
 
     pub fn build_history_offset(offset : u32, num_steps : u32) -> Vec<HistoryStep> {
-        let step = HistoryStep {
-            timestamp : 32432,
-            bid_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 },
-            ask_candle : Candlestick { price_open : 0.5, price_close : 0.4, price_high : 0.7, price_low : 0.1 }
-        };
 
         let mut history = Vec::new();
         for i in 0..num_steps {
-            let current_step = HistoryStep { timestamp : i + offset, ..step.clone() };
-            history.push(current_step);
+            let base = i as f32 + offset as f32 + 1.0;
+            let step = HistoryStep {
+                timestamp : i + offset,
+                bid_candle : Candlestick { price_open : base, price_close : -base, price_high : 2.0 * base, price_low : -2.0 * base },
+                ask_candle : Candlestick { price_open : base, price_close : -base, price_high : 3.0 * base, price_low : -3.0 * base }
+            };
+            history.push(step);
         }
 
         history

@@ -46,7 +46,7 @@ pub fn fetch_symbol_history(service : &mut impl TradingService,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::utils::tests::*;
+    use crate::utils::tests::*;
     use mockall::{predicate::*};
     use chrono::{TimeZone};
 

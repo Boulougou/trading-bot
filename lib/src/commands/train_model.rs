@@ -20,7 +20,8 @@ pub fn train_model<T : TradingModel>(model : &mut T,
     let (history, metadata) = storage.load_symbol_history(input_name)?;
 
     if output_mode == TrainingOutputMode::ContinueTraining {
-        let (model_symbol, model_timeframe) = model.load(model_name).context("Failed to load existing model")?;
+        let (model_symbol, model_timeframe, _input_window, _prediction_window) =
+            model.load(model_name).context("Failed to load existing model")?;
         if model_symbol != metadata.symbol {
             return Err(anyhow!("Existing model has different symbol, {} != {}", model_symbol, metadata.symbol));
         }
