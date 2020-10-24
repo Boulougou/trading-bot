@@ -64,14 +64,13 @@ impl PyTorchModel {
         let normalize = |v : f32| PyTorchModel::normalize_value_f(v, min_ever_bid_price, max_ever_bid_price);
         let mut input = Vec::new();
         let mut expected_output = Vec::new();
-        let input_per_history_step : u32 = 11;
+        let input_per_history_step : u32 = 10;
         // let input_per_history_step : u32 = 8;
         let output_per_history_step : u32 = 2;
         for (input_steps, future_steps) in input_events {
             for s in input_steps {
                 let datetime = Utc.timestamp(s.timestamp as i64, 0);
-                input.push(datetime.month0() as f32 / 11.0 - 0.5);
-                input.push(datetime.day0() as f32 / 30.0 - 0.5);
+                input.push(datetime.weekday() as i32 as f32 / 6.0 - 0.5);
                 input.push(datetime.hour() as f32 / 23.0 - 0.5);
 
                 input.push(normalize(s.bid_candle.price_low));

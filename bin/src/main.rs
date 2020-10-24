@@ -111,8 +111,8 @@ fn main() -> anyhow::Result<()> {
         Mode::eval => {
             let mut storage = file_storage::FileStorage::create()?;
             let mut model = pytorch_model::PyTorchModel::new();
-            let loss = trading_lib::evaluate_model(&mut model, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
-            println!("Loss: {:?}", loss);
+            let (model_loss, profit_or_loss) = trading_lib::evaluate_model(&mut model, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
+            println!("Model Loss: {}, Profit/Loss: {}", model_loss, profit_or_loss);
         },
         Mode::trade => {
             let mut service = fxcm::service::FxcmTradingService::create(fxcm_host, fxcm_token)?;

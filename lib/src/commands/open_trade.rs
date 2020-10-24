@@ -75,31 +75,13 @@ pub fn open_trade_with_options(service : &mut impl TradingService,
             used_maint_margin_percent, options.max_used_margin_percent));
     }
 
-    let cost = current_ask_price - current_bid_price;
-    let possible_income = max_bid_price - current_bid_price;
-    let possible_profit = possible_income - cost;
+    let (maybe_stop_losses, maybe_limit_profit) = utils::adjust_prediction(
+        (current_bid_price, current_ask_price), (min_bid_price, max_bid_price),
+        options.min_profit_percent, options.max_profit_percent, options.max_loss_percent)?;
 
-    let profit_percent = possible_profit / cost;
-    if profit_percent > options.min_profit_percent {
-        let trade_limit = if profit_percent > options.max_profit_percent {
-            current_bid_price + cost + options.max_profit_percent * cost
-        }
-        else {
-            max_bid_price
-        };
-
-        let trade_stop = current_bid_price - (options.max_loss_percent - 1.0) * cost;
-        let maybe_trade_stop = if trade_stop > 0.0 { Some(trade_stop) } else { None };
-
-        let trade_options = TradeOptions { stop : maybe_trade_stop, limit : Some(trade_limit) };
-        let trade_id = service.open_buy_trade(&symbol, amount, &trade_options)?;
-        Ok((trade_id, trade_options.stop, trade_options.limit))
-    }
-    else {
-        Err(anyhow!("Profit not possible: Profit({}) / Cost({}) = {} < MinProfit({}), (Bid({}), Ask({})), (MinBid({}), MaxBid({}))",
-            possible_profit, cost, profit_percent, options.min_profit_percent,
-            current_bid_price, current_ask_price, min_bid_price, max_bid_price))
-    }
+    let trade_options = TradeOptions { stop : maybe_stop_losses, limit : maybe_limit_profit };
+    let trade_id = service.open_buy_trade(&symbol, amount, &trade_options)?;
+    Ok((trade_id, trade_options.stop, trade_options.limit))
 }
 
 

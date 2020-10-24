@@ -64,6 +64,34 @@ pub fn find_bid_price_range(history : &[HistoryStep]) -> (f32, f32) {
     (min_bid_price, max_bid_price)
 }
 
+pub fn adjust_prediction((current_bid_price, current_ask_price) : (f32, f32),
+                     (predicted_min_bid_price, predicted_max_bid_price) : (f32, f32),
+                     min_profit_percent : f32,
+                     max_profit_percent : f32,
+                     max_loss_percent : f32) -> anyhow::Result<(Option<f32>, Option<f32>)> {
+    let cost = current_ask_price - current_bid_price;
+    let possible_income = predicted_max_bid_price - current_bid_price;
+    let possible_profit = possible_income - cost;
+
+    let profit_percent = possible_profit / cost;
+    if profit_percent <= min_profit_percent {
+        return Err(anyhow!("Profit not possible: Profit({}) / Cost({}) = {} < MinProfit({}), (Bid({}), Ask({})), (MinBid({}), MaxBid({}))",
+            possible_profit, cost, profit_percent, min_profit_percent,
+            current_bid_price, current_ask_price, predicted_min_bid_price, predicted_max_bid_price))
+    }
+
+    let trade_limit = if profit_percent > max_profit_percent {
+        current_bid_price + cost + max_profit_percent * cost
+    }
+    else {
+        predicted_max_bid_price
+    };
+
+    let trade_stop = current_bid_price - (max_loss_percent - 1.0) * cost;
+    let maybe_trade_stop = if trade_stop > 0.0 { Some(trade_stop) } else { None };
+
+    Ok((maybe_trade_stop, Some(trade_limit)))
+}
 
 #[cfg(test)]
 pub mod tests {
