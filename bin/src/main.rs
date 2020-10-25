@@ -6,6 +6,7 @@ use structopt::StructOpt;
 mod fxcm;
 mod file_storage;
 mod pytorch_model;
+mod plotters_plotter;
 
 arg_enum! {
     #[derive(Debug)]
@@ -114,8 +115,10 @@ fn main() -> anyhow::Result<()> {
         },
         Mode::eval => {
             let mut storage = file_storage::FileStorage::create()?;
+            let mut plotter = plotters_plotter::PlottersPlotter::create()?;
             let mut model = pytorch_model::PyTorchModel::new();
-            let (model_loss, profit_or_loss) = trading_lib::evaluate_model(&mut model, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
+            let (model_loss, profit_or_loss) = trading_lib::evaluate_model(&mut model,
+               &mut plotter, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
             println!("Model Loss: {}, Profit/Loss: {}", model_loss, profit_or_loss);
         },
         Mode::trade => {

@@ -1,5 +1,6 @@
 use crate::trading_model::*;
 use crate::storage::*;
+use crate::plotter::*;
 use crate::{utils, HistoryStep};
 use getset::{Setters};
 use anyhow::Context;
@@ -20,6 +21,7 @@ impl Default for PredictionEvaluationOptions {
 }
 
 pub fn evaluate_model(model : &mut impl TradingModel,
+                      plotter : &mut impl Plotter,
                       storage : &mut impl Storage,
                       model_name : &str,
                       input_name : &str) -> anyhow::Result<(f32, f32)> {
@@ -31,6 +33,10 @@ pub fn evaluate_model(model : &mut impl TradingModel,
 
     let mut predictions = Vec::new();
     let mut expectations = Vec::new();
+    let mut high_delta = Vec::new();
+    let mut low_delta = Vec::new();
+    let mut profit_history = Vec::new();
+    let mut cumulative_profit_history = Vec::new();
     let mut profit_or_loss = 0.0;
     for (input_steps, future_steps) in input_events {
         let prediction = model.predict(&input_steps)?;
@@ -41,7 +47,25 @@ pub fn evaluate_model(model : &mut impl TradingModel,
 
         let current_profit_or_loss = evaluate_prediction(prediction, &future_steps)?;
         profit_or_loss += current_profit_or_loss;
+
+        low_delta.push(expectation.0 - prediction.0);
+        high_delta.push(expectation.1 - prediction.1);
+        profit_history.push(current_profit_or_loss);
+        cumulative_profit_history.push(profit_or_loss);
     }
+
+    plotter.plot_lines(&vec!((String::from("Low delta"), low_delta.clone())),
+                       "Expected Low Bid price - Predicted Low Bid Price", &format!("{}/low_delta", model_name))?;
+    plotter.plot_lines(&vec!((String::from("High delta"), high_delta.clone())),
+                       "Expected High Bid price - Predicted High Bid Price", &format!("{}/high_delta", model_name))?;
+    plotter.plot_lines(&vec!((String::from("Profit"), profit_history.clone())),
+                       "Profit or Loss on each step", &format!("{}/profit", model_name))?;
+    plotter.plot_lines(&vec!((String::from("Profit"), cumulative_profit_history)),
+                       "Cumulative profit", &format!("{}/cumulative_profit", model_name))?;
+    plotter.plot_lines(&vec!((String::from("Low delta"), low_delta),
+                             (String::from("High delta"), high_delta),
+                             (String::from("Profit"), profit_history)),
+        "Summary", &format!("{}/summary", model_name))?;
 
     let model_loss = model.calculate_loss(&predictions, &expectations);
     Ok((model_loss, profit_or_loss))
@@ -50,20 +74,24 @@ pub fn evaluate_model(model : &mut impl TradingModel,
 fn evaluate_prediction((min_predicted_price, max_predicted_price) : (f32, f32), future_steps : &[HistoryStep]) -> anyhow::Result<f32> {
     let first_step = future_steps.first().context("There should be at least 1 future step")?;
     let pos_ask_price = first_step.ask_candle.price_open;
-    let pos_bid_price = first_step.bid_candle.price_open;
-    let pos_cost = pos_ask_price - pos_bid_price;
+    // let pos_bid_price = first_step.bid_candle.price_open;
+    // let pos_spread = pos_ask_price - pos_bid_price;
+    if max_predicted_price < pos_ask_price {
+        return Ok(0.0);
+    }
 
+    // let min_predicted_price = min_predicted_price - pos_spread;
     for s in future_steps {
         if s.bid_candle.price_low < min_predicted_price {
-            return Ok(-(pos_bid_price - min_predicted_price) - pos_cost);
+            return Ok(-(pos_ask_price - min_predicted_price));
         }
 
         if s.bid_candle.price_high > max_predicted_price {
-            return Ok(max_predicted_price - pos_bid_price - pos_cost);
+            return Ok(max_predicted_price - pos_ask_price);
         }
     }
 
-    Ok(-(pos_bid_price - min_predicted_price) - pos_cost)
+    Ok(-(pos_ask_price - min_predicted_price))
 }
 
 
@@ -80,6 +108,7 @@ mod tests {
     #[test]
     fn evaluate_model_with_history_smaller_than_required_size() {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
         let mut storage = MockStorage::new();
 
         let mut seq = Sequence::new();
@@ -93,7 +122,7 @@ mod tests {
             .times(1)
             .return_once(|_| Ok(build_history_and_meta(9, "EUR/CAN", HistoryTimeframe::Hour1)));
 
-        let result = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1");
+        let result = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1");
 
         assert!(result.is_err());
     }
@@ -101,7 +130,10 @@ mod tests {
     #[test]
     fn evaluate_model_with_history_equal_to_required_size() -> anyhow::Result<()> {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
         let mut storage = MockStorage::new();
+
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
 
         let mut seq = Sequence::new();
         model.expect_load()
@@ -124,7 +156,7 @@ mod tests {
             .times(1)
             .return_once(|_, _| 0.564);
 
-        let (model_loss, _profit_or_loss) = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+        let (model_loss, _profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
 
         assert_eq!(model_loss, 0.564);
         Ok(())
@@ -133,6 +165,8 @@ mod tests {
     #[test]
     fn evaluate_model_with_history_larger_than_input_size() -> anyhow::Result<()> {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
         let mut storage = MockStorage::new();
 
         let mut seq = Sequence::new();
@@ -166,7 +200,7 @@ mod tests {
             .times(1)
             .return_once(|_, _| 0.478);
 
-        let (model_loss, _profit_or_loss) = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+        let (model_loss, _profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
 
         assert_eq!(model_loss, 0.478);
         Ok(())
@@ -175,6 +209,8 @@ mod tests {
     #[test]
     fn return_profit_when_max_predicted_price_is_reached() -> anyhow::Result<()> {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
         let mut storage = MockStorage::new();
 
         model.expect_load()
@@ -215,7 +251,7 @@ mod tests {
             .times(1)
             .return_once(|_, _| 0.777);
 
-        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
 
         assert!((profit_or_loss - 0.1).abs() < 0.00001);
         Ok(())
@@ -224,6 +260,8 @@ mod tests {
     #[test]
     fn return_loss_when_max_predicted_price_is_never_reached() -> anyhow::Result<()> {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
         let mut storage = MockStorage::new();
 
         model.expect_load()
@@ -264,7 +302,7 @@ mod tests {
             .times(1)
             .return_once(|_, _| 0.777);
 
-        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
 
         assert!((profit_or_loss + 1.3).abs() < 0.00001);
         Ok(())
@@ -273,6 +311,8 @@ mod tests {
     #[test]
     fn return_loss_when_min_predicted_price_is_reached() -> anyhow::Result<()> {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
         let mut storage = MockStorage::new();
 
         model.expect_load()
@@ -313,15 +353,68 @@ mod tests {
             .times(1)
             .return_once(|_, _| 0.777);
 
-        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
 
         assert!((profit_or_loss + 1.3).abs() < 0.00001);
         Ok(())
     }
 
     #[test]
+    fn return_zero_profit_when_max_predicted_price_cannot_cover_spread() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
+        let mut storage = MockStorage::new();
+
+        model.expect_load()
+            .times(1)
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1, 2, 2)));
+
+        let history = vec!(
+            HistoryStep {
+                timestamp : 1,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+                ask_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+            },
+            HistoryStep {
+                timestamp : 2,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+                ask_candle : Candlestick { price_open : 1.0, price_close : 1.5, price_high : 1.0, price_low : 1.0 },
+            },
+            HistoryStep {
+                timestamp : 3,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.2, price_low : 0.1 },
+                ask_candle : Candlestick { price_open : 1.5, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+            },
+            HistoryStep {
+                timestamp : 4,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+                ask_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+            });
+
+        let history_meta = build_history_metadata("EUR/CAN", HistoryTimeframe::Hour1);
+        storage.expect_load_symbol_history()
+            .times(1)
+            .return_once(|_| Ok((history, history_meta)));
+
+        model.expect_predict()
+            .times(1)
+            .return_once(|_| Ok((0.2, 1.4)));
+        model.expect_calculate_loss()
+            .times(1)
+            .return_once(|_, _| 0.777);
+
+        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+
+        assert_eq!(profit_or_loss, 0.0);
+        Ok(())
+    }
+
+    #[test]
     fn return_accumulated_profit_or_loss_when_many_evaluations() -> anyhow::Result<()> {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
         let mut storage = MockStorage::new();
 
         model.expect_load()
@@ -362,7 +455,7 @@ mod tests {
             .times(1)
             .return_once(|_, _| 0.777);
 
-        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
 
         assert!((profit_or_loss - 0.1 + 1.3).abs() < 0.00001);
         Ok(())
@@ -371,13 +464,14 @@ mod tests {
     #[test]
     fn evaluate_model_failing_to_load_model() {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
         let mut storage = MockStorage::new();
 
         model.expect_load()
             .times(1)
             .with(eq("modelB"))
             .return_once(|_| Err(anyhow!("Failed")));
-        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+        let result = evaluate_model(&mut model, &mut plotter, &mut storage, "modelB", "EUR_CAN_Hour1");
 
         assert!(result.is_err());
     }
@@ -385,6 +479,7 @@ mod tests {
     #[test]
     fn evaluate_model_failing_to_load_input() {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
         let mut storage = MockStorage::new();
 
         model.expect_load()
@@ -395,7 +490,7 @@ mod tests {
             .with(eq("EUR_CAN_Hour1"))
             .times(1)
             .return_once(|_| Err(anyhow!("Failed")));
-        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+        let result = evaluate_model(&mut model, &mut plotter, &mut storage, "modelB", "EUR_CAN_Hour1");
 
         assert!(result.is_err());
     }
@@ -403,6 +498,7 @@ mod tests {
     #[test]
     fn evaluate_model_failing_run_prediction() {
         let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
         let mut storage = MockStorage::new();
 
         model.expect_load()
@@ -418,7 +514,7 @@ mod tests {
             .with(eq(build_history(10)))
             .times(1)
             .return_once(|_| Err(anyhow!("Failed")));
-        let result = evaluate_model(&mut model, &mut storage, "modelB", "EUR_CAN_Hour1");
+        let result = evaluate_model(&mut model, &mut plotter, &mut storage, "modelB", "EUR_CAN_Hour1");
 
         assert!(result.is_err());
     }
