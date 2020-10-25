@@ -1536,6 +1536,7 @@ dependencies = [
  "serde_json",
  "structopt",
  "tch",
+ "tempfile",
  "trading-lib",
  "tungstenite",
  "url",

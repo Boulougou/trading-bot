@@ -59,6 +59,9 @@ struct Opt {
     #[structopt(long, default_value = "3000", required_if("mode", "train"))]
     learning_iterations : u32,
 
+    #[structopt(long, default_value = "0", required_if("mode", "train"))]
+    hidden_layer_factor : u32,
+
     #[structopt(short, long)]
     continue_training : bool,
 
@@ -106,7 +109,8 @@ fn main() -> anyhow::Result<()> {
                 else { trading_lib::TrainingOutputMode::OverwriteModel };
             trading_lib::train_model(&mut model, &mut storage, &opt.input.unwrap(),
                 opt.input_window.unwrap(), opt.pred_window.unwrap(),
-                &(opt.learning_rate, opt.learning_iterations), &opt.model.unwrap(), mode)?;
+                &(opt.learning_rate, opt.learning_iterations, opt.hidden_layer_factor),
+                &opt.model.unwrap(), mode)?;
         },
         Mode::eval => {
             let mut storage = file_storage::FileStorage::create()?;

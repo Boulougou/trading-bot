@@ -6,15 +6,21 @@ use trading_lib::HistoryTimeframe;
 use rand::prelude::SliceRandom;
 use rand::SeedableRng;
 use chrono::{Utc, TimeZone, Datelike, Timelike};
+use tempfile::NamedTempFile;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TrainingMetadata {
     input_window : u32,
     prediction_window : u32,
-    min_input_value : f32,
-    max_input_value : f32,
     input_per_history_step : u32,
     output_per_history_step : u32,
+    hidden_layer_size : u32,
+    train_loss : f32,
+    test_loss : f32,
+    total_epochs : u32,
+    train_data_size : u32,
+    min_input_value : f32,
+    max_input_value : f32,
     symbol : String,
     timeframe : HistoryTimeframe
 }
@@ -43,7 +49,8 @@ impl PyTorchModel {
         let output_layer_size : i64 = training_metadata.output_per_history_step as i64;
 
         let mut var_store = tch::nn::VarStore::new(tch::Device::Cpu);
-        let neural_net = PyTorchModel::build_neural_net(input_layer_size, output_layer_size, &mut var_store);
+        let neural_net = PyTorchModel::build_neural_net(input_layer_size,
+                    training_metadata.hidden_layer_size as i64, output_layer_size, &mut var_store);
         var_store.load(format!("{}/model.var", name))?;
 
         let training_artifacts = TrainingArtifacts { var_store, neural_net, metadata : training_metadata };
@@ -64,14 +71,15 @@ impl PyTorchModel {
         let normalize = |v : f32| PyTorchModel::normalize_value_f(v, min_ever_bid_price, max_ever_bid_price);
         let mut input = Vec::new();
         let mut expected_output = Vec::new();
-        let input_per_history_step : u32 = 10;
-        // let input_per_history_step : u32 = 8;
+        let input_per_history_step : u32 = 12;
         let output_per_history_step : u32 = 2;
         for (input_steps, future_steps) in input_events {
             for s in input_steps {
                 let datetime = Utc.timestamp(s.timestamp as i64, 0);
-                input.push(datetime.weekday() as i32 as f32 / 6.0 - 0.5);
-                input.push(datetime.hour() as f32 / 23.0 - 0.5);
+                input.push(PyTorchModel::normalize_value_f(datetime.month0() as f32, 0.0, 11.0));
+                input.push(PyTorchModel::normalize_value_f(datetime.day0() as f32, 0.0, 30.0));
+                input.push(PyTorchModel::normalize_value_f(datetime.weekday() as i32 as f32, 0.0, 6.0));
+                input.push(PyTorchModel::normalize_value_f(datetime.hour() as f32, 0.0, 23.0));
 
                 input.push(normalize(s.bid_candle.price_low));
                 input.push(normalize(s.bid_candle.price_high));
@@ -123,15 +131,21 @@ impl PyTorchModel {
         (min_bid_price, max_bid_price)
     }
 
-    fn build_neural_net(input_layer_size: i64, output_layer_size: i64, var_store: &mut tch::nn::VarStore) -> tch::nn::Sequential {
-        let hidden_layer_size : i64 = input_layer_size / 32;
-        let neural_net = tch::nn::seq()
-            // .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, output_layer_size, Default::default()));
-            .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
-            .add_fn(|xs| xs.relu())
-            .add(tch::nn::linear(&var_store.root() / "output_layer", hidden_layer_size, output_layer_size, Default::default()));
+    fn build_neural_net(input_layer_size: i64, hidden_layer_size : i64, output_layer_size: i64, var_store: &mut tch::nn::VarStore) -> tch::nn::Sequential {
+        if hidden_layer_size == 0 {
+            let neural_net = tch::nn::seq()
+                .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, output_layer_size, Default::default()));
 
-        neural_net
+            neural_net
+        }
+        else {
+            let neural_net = tch::nn::seq()
+                .add(tch::nn::linear(&var_store.root() / "layer1", input_layer_size, hidden_layer_size, Default::default()))
+                .add_fn(|xs| xs.relu())
+                .add(tch::nn::linear(&var_store.root() / "output_layer", hidden_layer_size, output_layer_size, Default::default()));
+
+            neural_net
+        }
     }
 
     fn convert_to_one_dimension(&self, predictions: &[(f32, f32)]) -> Vec<f32> {
@@ -142,16 +156,38 @@ impl PyTorchModel {
         }
         pred_one_dim
     }
+
+    fn calculate_loss_tensor(output : &tch::Tensor, expected_output : &tch::Tensor) -> tch::Tensor {
+        let diff = expected_output - output;
+        // println!("diff: ");
+        // diff.print();
+
+        let prelu = diff.prelu(&tch::Tensor::from(0.25 as f32));
+        // println!("prelu: ");
+        // prelu.print();
+
+        let square = prelu.square();
+        // println!("square: ");
+        // square.print();
+
+        let mean = square.mean(tch::Kind::Float);
+        // println!("mean: ");
+        // mean.print();
+
+        mean
+
+        // output.mse_loss(expected_output, tch::Reduction::Mean)
+    }
 }
 
 impl trading_lib::TradingModel for PyTorchModel {
 
-    type TrainingParams = (f32, u32);
+    type TrainingParams = (f32, u32, u32);
 
     fn train(&mut self, history : &Vec<trading_lib::HistoryStep>,
              history_metadata : &trading_lib::HistoryMetadata,
              input_window : u32, prediction_window : u32,
-             &(learning_rate, num_iterations) : &Self::TrainingParams) -> anyhow::Result<()> {
+             &(learning_rate, num_iterations, hidden_layer_factor) : &Self::TrainingParams) -> anyhow::Result<()> {
         let (min_ever_bid_price, max_ever_bid_price) = PyTorchModel::find_min_max_prices(history);
 
         let (input, expected_output, input_per_history_step, output_per_history_step) = PyTorchModel::prepare_input_data(
@@ -160,16 +196,22 @@ impl trading_lib::TradingModel for PyTorchModel {
             &input, &expected_output, input_window, input_per_history_step, output_per_history_step, 0.8);
 
         let input_layer_size : i64 = input_per_history_step as i64 * input_window as i64;
+        let hidden_layer_size = if hidden_layer_factor == 0 { 0 } else { input_layer_size / hidden_layer_factor as i64 };
         let output_layer_size : i64 = output_per_history_step as i64;
 
         let mut var_store = tch::nn::VarStore::new(tch::Device::Cpu);
-        let neural_net = PyTorchModel::build_neural_net(input_layer_size, output_layer_size, &mut var_store);
-
-        if let Some(artifacts) = &self.training_artifacts {
-            var_store.copy(&artifacts.var_store)?;
-        }
+        let neural_net = PyTorchModel::build_neural_net(input_layer_size,
+            hidden_layer_size, output_layer_size, &mut var_store);
 
         let mut optimizer = tch::nn::Adam::default().build(&var_store, learning_rate as f64).unwrap();
+
+        if let Some(artifacts) = &self.training_artifacts {
+            if artifacts.metadata.hidden_layer_size != hidden_layer_size as u32 {
+                return Err(anyhow!("Invalid hidden layer size passed, loaded models has {} while passed size is {}",
+                    artifacts.metadata.hidden_layer_size, hidden_layer_size));
+            }
+            var_store.copy(&artifacts.var_store)?;
+        }
 
         let input_tensor = tch::Tensor::
             of_slice(&train_input).
@@ -185,29 +227,61 @@ impl trading_lib::TradingModel for PyTorchModel {
             of_slice(&test_expected_output).
             reshape(&[test_expected_output.len() as i64 / output_layer_size, output_layer_size]);
 
+        let mut train_loss : f32 = 0.0;
+        let mut test_loss : f32  = 0.0;
+        let mut min_train_loss = f32::INFINITY;
+        let mut min_test_loss = f32::INFINITY;
+        let mut prev_test_loss = f32::INFINITY;
+        let mut backup_weights : Option<NamedTempFile> = None;
         for epoch in 0..num_iterations {
             let output_tensor = neural_net.forward(&input_tensor);
             // let error = output_tensor - expected_output_tensor;
-            let loss_tensor = output_tensor.mse_loss(&expected_output_tensor, tch::Reduction::Mean);
+            let loss_tensor = PyTorchModel::calculate_loss_tensor(&output_tensor, &expected_output_tensor);
 
             optimizer.backward_step(&loss_tensor);
 
             let _no_grad_guard = tch::no_grad_guard();
             let test_output_tensor = neural_net.forward(&test_input_tensor);
-            let test_loss_tensor = test_output_tensor.mse_loss(&test_expected_output_tensor, tch::Reduction::Mean);
+            let test_loss_tensor = PyTorchModel::calculate_loss_tensor(&test_output_tensor, &test_expected_output_tensor);
 
+            if test_loss > prev_test_loss && test_loss < min_test_loss {
+                min_test_loss = test_loss;
+                min_train_loss = train_loss;
+
+                let temp_file = tempfile::Builder::new()
+                    .prefix(&format!("epoch{}_", epoch))
+                    .suffix(".var")
+                    .rand_bytes(5)
+                    .tempfile()?;
+
+                var_store.save(&temp_file)?;
+                backup_weights = Some(temp_file);
+            }
+            prev_test_loss = test_loss;
+
+            train_loss = f64::from(&loss_tensor) as f32;
+            test_loss = f64::from(&test_loss_tensor) as f32;
             println!(
-                "epoch: {:4} train loss: {:8.5} test loss: {:8.5}",
+                "epoch: {:4} train loss: {:8.10} test loss: {:8.10}",
                 epoch,
-                f64::from(&loss_tensor),
-                f64::from(&test_loss_tensor),
+                train_loss,
+                test_loss,
             );
         }
 
+        if test_loss > min_test_loss {
+            println!("Using backup weights with train loss: {:8.10} test lost: {:8.10}", min_train_loss, min_test_loss);
+            train_loss = min_train_loss;
+            test_loss = min_test_loss;
+            var_store.load(&backup_weights.unwrap())?;
+        }
+
+        let train_data_size = train_input.len() as u32 / input_layer_size as u32 + test_input.len() as u32 / input_layer_size as u32;
         let training_metadata = TrainingMetadata { input_window, prediction_window,
             min_input_value : min_ever_bid_price, max_input_value : max_ever_bid_price,
             timeframe : history_metadata.timeframe, symbol : history_metadata.symbol.clone(),
-            input_per_history_step, output_per_history_step
+            input_per_history_step, output_per_history_step, total_epochs : num_iterations,
+            train_loss, test_loss, train_data_size, hidden_layer_size : hidden_layer_size as u32
         };
         self.training_artifacts = Some(TrainingArtifacts { var_store, neural_net, metadata : training_metadata });
 
@@ -248,7 +322,9 @@ impl trading_lib::TradingModel for PyTorchModel {
         let exp_tensor = tch::Tensor::of_slice(&exp_one_dim).
             reshape(&[exp_one_dim.len() as i64 / 2, 2]);
 
-        f32::from(pred_tensor.mse_loss(&exp_tensor, tch::Reduction::Mean))
+        let loss_tensor = PyTorchModel::calculate_loss_tensor(&pred_tensor, &exp_tensor);
+
+        f32::from(loss_tensor)
     }
 
     fn save(&mut self, output_name : &str) -> anyhow::Result<()> {
