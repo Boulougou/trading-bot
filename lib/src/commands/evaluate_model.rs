@@ -64,8 +64,17 @@ pub fn evaluate_model(model : &mut impl TradingModel,
                        "Cumulative profit", &format!("{}/cumulative_profit", model_name))?;
     plotter.plot_lines(&vec!((String::from("Low delta"), low_delta),
                              (String::from("High delta"), high_delta),
-                             (String::from("Profit"), profit_history)),
-        "Summary", &format!("{}/summary", model_name))?;
+                             (String::from("Profit"), profit_history.clone())),
+        "Delta Summary", &format!("{}/summary", model_name))?;
+    let predictions_low = predictions.iter().map(|p| p.0).collect();
+    let predictions_high = predictions.iter().map(|p| p.1).collect();
+    let expected_low = expectations.iter().map(|e| e.0).collect();
+    let expected_high = expectations.iter().map(|e| e.1).collect();
+    plotter.plot_lines(&vec!((String::from("Low Pred"), predictions_low),
+                             (String::from("High Pred"), predictions_high),
+                             (String::from("Low Expect"), expected_low),
+                             (String::from("High Expect"), expected_high)),
+                       "Prices", &format!("{}/prices", model_name))?;
 
     let model_loss = model.calculate_loss(&predictions, &expectations);
     Ok((model_loss, profit_or_loss))
@@ -74,9 +83,13 @@ pub fn evaluate_model(model : &mut impl TradingModel,
 fn evaluate_prediction((min_predicted_price, max_predicted_price) : (f32, f32), future_steps : &[HistoryStep]) -> anyhow::Result<f32> {
     let first_step = future_steps.first().context("There should be at least 1 future step")?;
     let pos_ask_price = first_step.ask_candle.price_open;
-    // let pos_bid_price = first_step.bid_candle.price_open;
+    let pos_bid_price = first_step.bid_candle.price_open;
     // let pos_spread = pos_ask_price - pos_bid_price;
     if max_predicted_price < pos_ask_price {
+        return Ok(0.0);
+    }
+
+    if min_predicted_price > pos_bid_price {
         return Ok(0.0);
     }
 
@@ -400,6 +413,57 @@ mod tests {
         model.expect_predict()
             .times(1)
             .return_once(|_| Ok((0.2, 1.4)));
+        model.expect_calculate_loss()
+            .times(1)
+            .return_once(|_, _| 0.777);
+
+        let (_model_loss, profit_or_loss) = evaluate_model(&mut model, &mut plotter, &mut storage, "modelA", "EUR_CAN_Hour1")?;
+
+        assert_eq!(profit_or_loss, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn return_zero_profit_when_min_predicted_price_greater_than_current_price() -> anyhow::Result<()> {
+        let mut model = MockTradingModel::new();
+        let mut plotter = MockPlotter::new();
+        plotter.expect_plot_lines().returning(|_, _, _| Ok(()));
+        let mut storage = MockStorage::new();
+
+        model.expect_load()
+            .times(1)
+            .return_once(|_| Ok((String::from("EUR/CAN"), HistoryTimeframe::Hour1, 2, 2)));
+
+        let history = vec!(
+            HistoryStep {
+                timestamp : 1,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+                ask_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+            },
+            HistoryStep {
+                timestamp : 2,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+                ask_candle : Candlestick { price_open : 1.0, price_close : 1.5, price_high : 1.0, price_low : 1.0 },
+            },
+            HistoryStep {
+                timestamp : 3,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.2, price_low : 0.1 },
+                ask_candle : Candlestick { price_open : 1.5, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+            },
+            HistoryStep {
+                timestamp : 4,
+                bid_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+                ask_candle : Candlestick { price_open : 1.0, price_close : 1.0, price_high : 1.0, price_low : 1.0 },
+            });
+
+        let history_meta = build_history_metadata("EUR/CAN", HistoryTimeframe::Hour1);
+        storage.expect_load_symbol_history()
+            .times(1)
+            .return_once(|_| Ok((history, history_meta)));
+
+        model.expect_predict()
+            .times(1)
+            .return_once(|_| Ok((1.2, 1.7)));
         model.expect_calculate_loss()
             .times(1)
             .return_once(|_, _| 0.777);

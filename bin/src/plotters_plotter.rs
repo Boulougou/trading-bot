@@ -66,7 +66,9 @@ impl PlottersPlotter {
             0 => RED,
             1 => GREEN,
             2 => BLUE,
-            _ => YELLOW
+            3 => YELLOW,
+            4 => CYAN,
+            _ => MAGENTA
         };
         color
     }
