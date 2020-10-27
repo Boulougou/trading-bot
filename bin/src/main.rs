@@ -117,8 +117,21 @@ fn main() -> anyhow::Result<()> {
             let mut storage = file_storage::FileStorage::create()?;
             let mut plotter = plotters_plotter::PlottersPlotter::create()?;
             let mut model = pytorch_model::PyTorchModel::new();
+
+            let mut eval_options = trading_lib::PredictionEvaluationOptions::default();
+            if let Some(profit) = opt.min_profit {
+                eval_options.set_min_profit_percent(profit);
+            }
+            if let Some(profit) = opt.max_profit {
+                eval_options.set_max_profit_percent(profit);
+            }
+            if let Some(loss) = opt.max_loss {
+                eval_options.set_max_loss_percent(loss);
+            }
+
             let (model_loss, profit_or_loss) = trading_lib::evaluate_model(&mut model,
-               &mut plotter, &mut storage, &opt.model.unwrap(), &opt.input.unwrap())?;
+               &mut plotter, &mut storage, &opt.model.unwrap(),
+               &opt.input.unwrap(), eval_options)?;
             println!("Model Loss: {}, Profit/Loss: {}", model_loss, profit_or_loss);
         },
         Mode::trade => {

@@ -158,25 +158,25 @@ impl PyTorchModel {
     }
 
     fn calculate_loss_tensor(output : &tch::Tensor, expected_output : &tch::Tensor) -> tch::Tensor {
-        let diff = expected_output - output;
-        // println!("diff: ");
-        // diff.print();
+        // let diff = output - expected_output;
+        // // println!("diff: ");
+        // // diff.print();
+        //
+        // let prelu = diff.prelu(&tch::Tensor::from(0.95f32));
+        // // println!("prelu: ");
+        // // prelu.print();
+        //
+        // let square = prelu.square();
+        // // println!("square: ");
+        // // square.print();
+        //
+        // let mean = square.mean(tch::Kind::Float);
+        // // println!("mean: ");
+        // // mean.print();
+        //
+        // mean
 
-        let prelu = diff.prelu(&tch::Tensor::from(0.25 as f32));
-        // println!("prelu: ");
-        // prelu.print();
-
-        let square = prelu.square();
-        // println!("square: ");
-        // square.print();
-
-        let mean = square.mean(tch::Kind::Float);
-        // println!("mean: ");
-        // mean.print();
-
-        mean
-
-        // output.mse_loss(expected_output, tch::Reduction::Mean)
+        output.mse_loss(expected_output, tch::Reduction::Mean)
     }
 }
 

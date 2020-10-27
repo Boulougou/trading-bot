@@ -14,6 +14,9 @@ impl trading_lib::Plotter for PlottersPlotter {
         let png_filename = format!("{}.png", filename);
         let root_area =
             BitMapBackend::new(&png_filename, (1920, 1080)).into_drawing_area();
+        // let png_filename = format!("{}.svg", filename);
+        // let root_area =
+        //     SVGBackend::new(&png_filename, (1920, 1080)).into_drawing_area();
         root_area.fill(&WHITE)?;
 
         let root_area = root_area.titled(title, ("sans-serif", 18))?;
