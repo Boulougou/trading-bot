@@ -176,7 +176,13 @@ impl PyTorchModel {
         //
         // mean
 
-        output.mse_loss(expected_output, tch::Reduction::Mean)
+        // let diff = output - expected_output;
+        // let low_output = output.chunk();
+        // let range_loss = output.mse_loss(expected_output, tch::Reduction::Mean);
+        //
+        let accuracy_loss = output.mse_loss(expected_output, tch::Reduction::Mean);
+
+        accuracy_loss// + 0.25 * range_loss
     }
 }
 

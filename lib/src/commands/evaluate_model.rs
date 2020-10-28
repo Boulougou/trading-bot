@@ -10,13 +10,14 @@ use anyhow::Context;
 pub struct PredictionEvaluationOptions {
     pub min_profit_percent : f32,
     pub max_profit_percent : f32,
-    pub max_loss_percent : f32
+    pub max_loss_percent : f32,
+    pub prediction_window_multiplier : u32
 }
 
 impl Default for PredictionEvaluationOptions {
     fn default() -> Self {
         PredictionEvaluationOptions { min_profit_percent : 0.0, max_profit_percent : f32::INFINITY,
-            max_loss_percent : f32::INFINITY }
+            max_loss_percent : f32::INFINITY, prediction_window_multiplier : 1 }
     }
 }
 
@@ -30,7 +31,8 @@ pub fn evaluate_model(model : &mut impl TradingModel,
 
     let (history, _metadata) = storage.load_symbol_history(input_name)?;
 
-    let input_events = utils::extract_input_and_prediction_windows(&history, input_window as u32, prediction_window)?;
+    let input_events = utils::extract_input_and_prediction_windows(&history,
+        input_window as u32, prediction_window * eval_options.prediction_window_multiplier)?;
 
     let mut predictions = Vec::new();
     let mut expectations = Vec::new();
@@ -44,7 +46,7 @@ pub fn evaluate_model(model : &mut impl TradingModel,
         let prediction = model.predict(&input_steps)?;
         predictions.push(prediction);
 
-        let expectation = utils::find_bid_price_range(&future_steps);
+        let expectation = utils::find_bid_price_range(&future_steps[0..prediction_window as usize]);
         expectations.push(expectation);
 
         let (current_bid_price, current_ask_price) = get_current_prices(&future_steps)?;
@@ -112,8 +114,16 @@ fn evaluate_position((_pos_bid_price, pos_ask_price) : (f32, f32),
         }
     }
 
-    // println!("INCONCLUSIVE: {}", -(pos_ask_price - maybe_stop.unwrap()));
-    Ok(-(pos_ask_price - maybe_stop.unwrap()))
+    if maybe_stop.is_some() {
+        // println!("INCONCLUSIVE WITH STOP: {}", -(pos_ask_price - maybe_stop.unwrap()));
+        Ok(-(pos_ask_price - maybe_stop.unwrap()))
+    }
+    else {
+        let last_bid_price = future_steps.last().unwrap().bid_candle.price_low;
+        let penalty = -(pos_ask_price - last_bid_price).abs();
+        // println!("INCONCLUSIVE: {}", penalty);
+        Ok(penalty)
+    }
 }
 
 fn get_current_prices(future_steps: &[HistoryStep]) -> anyhow::Result<(f32, f32)> {

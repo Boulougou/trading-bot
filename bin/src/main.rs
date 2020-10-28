@@ -76,7 +76,10 @@ struct Opt {
     max_loss : Option<f32>,
 
     #[structopt(long)]
-    max_used_margin : Option<f32>
+    max_used_margin : Option<f32>,
+
+    #[structopt(long)]
+    prediction_window_multiplier : Option<u32>
 }
 
 fn parse_date(date_str : &str) -> anyhow::Result<DateTime<Utc>> {
@@ -127,6 +130,9 @@ fn main() -> anyhow::Result<()> {
             }
             if let Some(loss) = opt.max_loss {
                 eval_options.set_max_loss_percent(loss);
+            }
+            if let Some(multiplier) = opt.prediction_window_multiplier {
+                eval_options.set_prediction_window_multiplier(multiplier);
             }
 
             let (model_loss, profit_or_loss) = trading_lib::evaluate_model(&mut model,
