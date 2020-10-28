@@ -1,0 +1,1 @@
+{"input_window":48,"prediction_window":1,"input_per_history_step":12,"output_per_history_step":2,"hidden_layer_size":0,"train_loss":0.000008504654,"test_loss":0.000008457937,"total_epochs":5000,"train_data_size":88315,"min_input_value":1.03395,"max_input_value":1.39931,"symbol":"EUR/USD","timeframe":"Min30"}
