@@ -31,7 +31,7 @@ cargo run -- eval --min-profit 2.0 --max-loss 10.0 -m ./models/EUR_USD_Min1_30_5
 Note that the data used for evaluation must be different than the data used for training.
 
 ### Trading
-It is also possible to use a model for actual trading (in FXCM demo server). The command below will fetch the lastest candlesticks for symbol EUR/USD, it will feed the model `./models/EUR_USD_Min1_30_5/` with these candlesticks and then will use its prediciton for opening a 'buy' position with the specified amounts of lots (`-a 10`).
+It is also possible to use a model for actual trading (in FXCM demo server). The command below will fetch the lastest candlesticks for symbol EUR/USD, it will feed the model `./models/EUR_USD_Min1_30_5/` with these candlesticks and then will use its prediction for opening a 'buy' position with the specified amount of lots (`-a 10`).
 ```
 cargo run -- trade -m ./models/EUR_USD_Min1_30_5/ -a 10 --max-loss 20.0 --max-used-margin 0.003
 ```
